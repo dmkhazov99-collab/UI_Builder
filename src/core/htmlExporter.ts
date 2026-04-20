@@ -1,30 +1,81 @@
 /**
- * СИСТЕМА СТАНДАРТА HTML ИНТЕРФЕЙСА
- * Генератор HTML-экспорта
- * 
- * Этот модуль отвечает за преобразование внутренней модели проекта
- * в единый самодостаточный HTML-файл по строгому стандарту.
+ * ============================================
+ * MODULE: HTML Export Pipeline
+ * VERSION: 1.2.0
+ * ROLE:
+ * Единый pipeline генерации runtime/export HTML для UI Builder.
+ *
+ * RESPONSIBILITIES:
+ * - собрать полный HTML-документ из Project
+ * - собрать CSS из design system
+ * - собрать JS runtime и пользовательскую логику
+ * - подготовить HTML для preview/export
+ * - сформировать ZIP-бандл проекта
+ *
+ * DEPENDS ON:
+ * - Project domain model
+ * - Page / Section / Block / HeaderIsolator / ContentIsolator
+ *
+ * USED BY:
+ * - projectRuntimeHtml.ts
+ * - PreviewPanel
+ * - CodePanel
+ * - Toolbar export actions
+ *
+ * RULES:
+ * - один источник итогового HTML для preview и export
+ * - public API модуля должен оставаться стабильным
+ * - пользовательский HTML/CSS/JS не должен ломать pipeline сборки
+ *
+ * SECURITY:
+ * - block/content/header endpoint HTML считается trusted-only
+ * - custom JS/CSS считается trusted-only
+ * - метаданные и служебные поля экранируются
+ * ============================================
  */
 
-import type { Project, Page, Section, Block, HeaderIsolator, ContentIsolator } from '@/types/project';
+import type {
+  Block,
+  ContentIsolator,
+  HeaderIsolator,
+  Page,
+  Project,
+  Section,
+} from '@/types/project';
 
-// ============================================
-// ГЕНЕРАЦИЯ ПОЛНОГО HTML-ДОКУМЕНТА
-// ============================================
+/**
+ * ============================================
+ * BLOCK: Shared Constants
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Общие служебные значения модуля.
+ * ============================================
+ */
+const DEFAULT_HTML_FILENAME = 'ui_builder_project.html';
+const DEFAULT_ZIP_FILENAME = 'ui_builder_project.zip';
 
+/**
+ * ============================================
+ * BLOCK: Public HTML API
+ * VERSION: 1.1.0
+ * PURPOSE:
+ * Публичные функции для генерации и резолва итогового HTML.
+ * ============================================
+ */
 export function generateHTML(project: Project): string {
   const { meta, designSystem, pages, customLogic } = project;
-  
+
   const css = generateCSS(designSystem, customLogic.css);
-  const body = pages.map((page) => generatePage(page)).join('\n');
+  const body = pages.map((page) => generatePage(page)).join('\n\n');
   const js = generateJS(customLogic.javascript);
-  
+  const title = escapeHtml(meta.name || 'UI Builder Project');
+
   return `<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>${meta.name}</title>
+  <title>${title}</title>
   <style>
 ${css}
   </style>
@@ -40,16 +91,28 @@ ${js}
 </html>`;
 }
 
-// ============================================
-// ГЕНЕРАЦИЯ CSS
-// ============================================
+export function resolveProjectHtml(project: Project): string {
+  const override = project.customLogic?.htmlOverride?.trim();
+  return override ? override : generateHTML(project);
+}
 
-function generateCSS(designSystem: Project['designSystem'], customCSS: string): string {
+/**
+ * ============================================
+ * BLOCK: CSS Generation
+ * VERSION: 1.1.0
+ * PURPOSE:
+ * Генерация полного inline CSS для runtime/export документа.
+ * ============================================
+ */
+function generateCSS(
+  designSystem: Project['designSystem'],
+  customCSS: string
+): string {
   const { colors, typography, spacing, grid } = designSystem;
-  
+
   return `/* ============================================
-   СИСТЕМА СТАНДАРТА HTML ИНТЕРФЕЙСА
-   Автоматически сгенерировано UI Builder
+   UI BUILDER RUNTIME CSS
+   VERSION: 1.1.0
    ============================================ */
 
 :root {
@@ -80,7 +143,8 @@ function generateCSS(designSystem: Project['designSystem'], customCSS: string): 
   padding: 0;
 }
 
-html, body {
+html,
+body {
   background: var(--bg-primary);
   color: var(--text-primary);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -113,24 +177,24 @@ body {
 }
 
 /* ============================================
-   ТИПОГРАФИКА
+   Typography
    ============================================ */
 
 .h1 { font-size: ${typography.h1.fontSize}; font-weight: ${typography.h1.fontWeight}; }
 .h2 { font-size: ${typography.h2.fontSize}; font-weight: ${typography.h2.fontWeight}; }
 .h3 { font-size: ${typography.h3.fontSize}; font-weight: ${typography.h3.fontWeight}; }
 
-.text-base  { font-size: ${typography.textBase.fontSize}; }
-.text-small { 
-  font-size: ${typography.textSmall.fontSize}; 
-  color: var(--text-secondary); 
+.text-base { font-size: ${typography.textBase.fontSize}; }
+.text-small {
+  font-size: ${typography.textSmall.fontSize};
+  color: var(--text-secondary);
 }
 
 .font-medium { font-weight: 500; }
-.font-bold   { font-weight: 700; }
+.font-bold { font-weight: 700; }
 
 /* ============================================
-   ВНЕШНЯЯ СЕТКА: СЕКЦИИ И ИЗОЛЯТОРЫ
+   Layout: Section Isolators
    ============================================ */
 
 .section-header-isolator {
@@ -155,7 +219,7 @@ body {
 }
 
 /* ============================================
-   ВНУТРЕННЯЯ МОДУЛЬНАЯ СЕТКА
+   Layout: Grid
    ============================================ */
 
 .grid {
@@ -165,7 +229,6 @@ body {
   gap: var(--grid-gap);
 }
 
-/* Span Classes */
 .span-1 { grid-column: span 1; }
 .span-2 { grid-column: span 2; }
 .span-3 { grid-column: span 3; }
@@ -181,7 +244,7 @@ body {
 .row-span-6 { grid-row: span 6; }
 
 /* ============================================
-   БЛОКИ
+   Block Base
    ============================================ */
 
 .block {
@@ -200,16 +263,12 @@ body {
   box-sizing: border-box;
 }
 
-/* ============================================
-   ТИПЫ БЛОКОВ
-   ============================================ */
-
-/* block-info: Информационный блок */
+/* block-info */
 .block-info {
-  /* Использует базовые стили блока */
+  /* Base block styles only */
 }
 
-/* block-button: Интерактивная кнопка */
+/* block-button */
 .block-button {
   cursor: pointer;
   justify-content: center;
@@ -230,16 +289,11 @@ body {
   transform: scale(0.96);
 }
 
-/* ============================================
-   РЕЖИМЫ БЛОКОВ
-   ============================================ */
-
-/* clip: Стандартный режим (по умолчанию) */
+/* Block modes */
 .block-clip {
-  /* Нет дополнительных стилей */
+  /* Default mode */
 }
 
-/* scroll: Прокрутка внутри блока */
 .block-scroll .block-content {
   overflow-y: auto;
   overflow-x: hidden;
@@ -255,7 +309,6 @@ body {
   white-space: normal;
 }
 
-/* auto: Автоматическая высота по содержимому */
 .block-auto,
 .block-grow {
   height: auto;
@@ -266,21 +319,17 @@ body {
   height: auto;
 }
 
-/* ============================================
-   ENDPOINT'Ы (ТОЧКИ РАСШИРЕНИЯ)
-   ============================================ */
-
+/* Extension points */
 .header-endpoint,
 .content-endpoint {
   position: relative;
 }
 
 /* ============================================
-   ПОЛЬЗОВАТЕЛЬСКИЕ СТИЛИ
+   Custom CSS (trusted-only)
    ============================================ */
 
-${customCSS}
-
+${customCSS || ''}
 
 @media (max-width: 900px) {
   :root {
@@ -300,152 +349,211 @@ ${customCSS}
     --grid-row: 20px;
   }
 }
-
 `;
 }
 
-// ============================================
-// ГЕНЕРАЦИЯ СТРАНИЦЫ
-// ============================================
-
+/**
+ * ============================================
+ * BLOCK: Markup Generation
+ * VERSION: 1.1.0
+ * PURPOSE:
+ * Сборка страницы, секции, изоляторов и блоков.
+ * ============================================
+ */
 function generatePage(page: Page): string {
   return page.sections.map((section) => generateSection(section)).join('\n\n');
 }
 
-// ============================================
-// ГЕНЕРАЦИЯ СЕКЦИИ
-// ============================================
-
 function generateSection(section: Section): string {
   const header = generateHeaderIsolator(section.header);
   const content = generateContentIsolator(section.content);
-  
+
   return `${header}
 
 ${content}`;
 }
 
-// ============================================
-// ГЕНЕРАЦИЯ ЗАГОЛОВОЧНОГО ИЗОЛЯТОРА
-// ============================================
-
 function generateHeaderIsolator(header: HeaderIsolator): string {
+  const endpointName = escapeHtmlAttribute(header.endpoint?.name || 'header-endpoint');
   const hasEndpointHtml = Boolean(header.endpoint?.html?.trim());
+
   const endpointHtml = hasEndpointHtml
-    ? `\n  <div class="section-header-content header-endpoint ${header.endpoint!.name}">\n    ${header.endpoint!.html}\n  </div>`
-    : `\n  <div class="section-header-content">\n    <div class="h1">${escapeHtml(header.title)}</div>\n  </div>`;
+    ? `
+  <div class="section-header-content header-endpoint ${endpointName}">
+    ${header.endpoint!.html}
+  </div>`
+    : `
+  <div class="section-header-content">
+    <div class="h1">${escapeHtml(header.title)}</div>
+  </div>`;
 
   const endpointCss = header.endpoint?.css?.trim()
-    ? `\n<style>\n${header.endpoint.css}\n</style>`
+    ? `
+<style>
+${header.endpoint.css}
+</style>`
     : '';
 
-  return `<!-- SECTION HEADER -->\n<div class="section-header-isolator">${endpointHtml}\n</div>${endpointCss}`;
+  return `<!-- SECTION HEADER -->
+<div class="section-header-isolator">${endpointHtml}
+</div>${endpointCss}`;
 }
-
-// ============================================
-// ГЕНЕРАЦИЯ КОНТЕНТНОГО ИЗОЛЯТОРА
-// ============================================
 
 function generateContentIsolator(content: ContentIsolator): string {
   const blocksHtml = content.blocks.map((block) => generateBlock(block)).join('\n    ');
-  
+  const endpointName = escapeHtmlAttribute(content.endpoint?.name || 'content-endpoint');
+
   const endpointHtml = content.endpoint?.html?.trim()
-    ? `\n  <div class="content-endpoint ${content.endpoint.name}">\n    ${content.endpoint.html}\n  </div>`
+    ? `
+  <div class="content-endpoint ${endpointName}">
+    ${content.endpoint.html}
+  </div>`
     : '';
 
   const endpointCss = content.endpoint?.css?.trim()
-    ? `\n<style>\n${content.endpoint.css}\n</style>`
+    ? `
+<style>
+${content.endpoint.css}
+</style>`
     : '';
 
-  return `<!-- SECTION CONTENT -->\n<div class="section-content-isolator">\n  <div class="grid">\n    ${blocksHtml}\n  </div>${endpointHtml}\n</div>${endpointCss}`;
+  return `<!-- SECTION CONTENT -->
+<div class="section-content-isolator">
+  <div class="grid">
+    ${blocksHtml}
+  </div>${endpointHtml}
+</div>${endpointCss}`;
 }
-
-// ============================================
-// ГЕНЕРАЦИЯ БЛОКА
-// ============================================
 
 function generateBlock(block: Block): string {
   const modeClass = block.mode !== 'clip' ? ` block-${block.mode}` : '';
   const classes = `block ${block.type}${modeClass}`;
   const tag = block.type === 'block-button' ? 'button' : 'div';
   const typeAttr = block.type === 'block-button' ? ' type="button"' : '';
-  
-  // Генерируем комментарий документации
-  const comment = `<!-- BLOCK: ${escapeHtml(block.content.text || 'Untitled')} | TYPE: ${block.type} | SIZE: span-${block.span} row-span-${block.rowSpan} | MODE: ${block.mode} -->`;
-  
+  const blockLabel = escapeHtml(block.content.text || block.name || 'Untitled');
+  const comment = `<!-- BLOCK: ${blockLabel} | TYPE: ${block.type} | SIZE: span-${block.span} row-span-${block.rowSpan} | MODE: ${block.mode} -->`;
   const styleAttr = ` style="grid-column: span ${block.span}; grid-row: span ${block.rowSpan};"`;
-  return `${comment}\n    <${tag} class="${classes}"${typeAttr}${styleAttr}>\n      <div class="block-content">\n        ${block.content.html}\n      </div>\n    </${tag}>`;
+
+  return `${comment}
+    <${tag} class="${classes}"${typeAttr}${styleAttr}>
+      <div class="block-content">
+        ${block.content.html}
+      </div>
+    </${tag}>`;
 }
 
-// ============================================
-// ГЕНЕРАЦИЯ JAVASCRIPT
-// ============================================
-
+/**
+ * ============================================
+ * BLOCK: Runtime JS Generation
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Сборка базового runtime JS и пользовательской логики.
+ * ============================================
+ */
 function generateJS(customJS: string): string {
+  const indentedCustomJS = (customJS || '')
+    .split('\n')
+    .map((line) => `  ${line}`)
+    .join('\n');
+
   return `(function() {
   'use strict';
-  
+
   // ============================================
-  // СИСТЕМА СТАНДАРТА HTML ИНТЕРФЕЙСА
-  // Автоматически сгенерировано UI Builder
+  // UI BUILDER RUNTIME JS
+  // VERSION: 1.0.0
   // ============================================
-  
-  // Инициализация при загрузке DOM
+
   document.addEventListener('DOMContentLoaded', function() {
     initializeBlocks();
   });
-  
+
   function initializeBlocks() {
-    // Инициализация кнопок
     const buttons = document.querySelectorAll('.block-button');
+
     buttons.forEach(function(button) {
-      button.addEventListener('click', function(e) {
-        // Базовая обработка клика
-        console.log('Button clicked:', e.currentTarget);
+      button.addEventListener('click', function(event) {
+        console.log('Button clicked:', event.currentTarget);
       });
     });
   }
-  
+
   // ============================================
-  // ПОЛЬЗОВАТЕЛЬСКАЯ ЛОГИКА
+  // Custom JS (trusted-only)
   // ============================================
-  
-${customJS.split('\n').map(line => '  ' + line).join('\n')}
-  
+
+${indentedCustomJS}
+
 })();`;
 }
 
-// ============================================
-// УТИЛИТЫ
-// ============================================
-
-function escapeHtml(text: string): string {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
+/**
+ * ============================================
+ * BLOCK: Escaping Utilities
+ * VERSION: 1.1.0
+ * PURPOSE:
+ * Экранирование служебных строк, метаданных и имён файлов.
+ * ============================================
+ */
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#39;');
 }
 
+function escapeHtmlAttribute(value: string): string {
+  return escapeHtml(value).replaceAll(/\s+/g, '-');
+}
 
 function sanitizeFileName(name: string): string {
-  return name.replace(/[/:*?"<>|]+/g, '-').replace(/\s+/g, '_');
+  const sanitized = name
+    .replace(/[/:*?"<>|]+/g, '-')
+    .replace(/\s+/g, '_')
+    .trim();
+
+  return sanitized || 'file';
 }
 
+function buildHtmlDownloadName(project: Project): string {
+  const baseName = sanitizeFileName(project.meta.name || 'ui_builder_project');
+  return baseName ? `${baseName}.html` : DEFAULT_HTML_FILENAME;
+}
+
+function buildZipDownloadName(project: Project): string {
+  const baseName = sanitizeFileName(project.meta.name || 'ui_builder_project');
+  return baseName ? `${baseName}.zip` : DEFAULT_ZIP_FILENAME;
+}
+
+/**
+ * ============================================
+ * BLOCK: ZIP Builder
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Локальная сборка ZIP без внешних зависимостей.
+ * ============================================
+ */
 function crc32(data: Uint8Array): number {
   let crc = 0xffffffff;
+
   for (let i = 0; i < data.length; i += 1) {
     crc ^= data[i];
+
     for (let j = 0; j < 8; j += 1) {
       crc = (crc >>> 1) ^ (0xedb88320 & -(crc & 1));
     }
   }
+
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-function writeUint16(view: DataView, offset: number, value: number) {
+function writeUint16(view: DataView, offset: number, value: number): void {
   view.setUint16(offset, value, true);
 }
 
-function writeUint32(view: DataView, offset: number, value: number) {
+function writeUint32(view: DataView, offset: number, value: number): void {
   view.setUint32(offset, value, true);
 }
 
@@ -462,6 +570,7 @@ function createZip(files: Array<{ name: string; content: string }>): Blob {
 
     const localHeader = new Uint8Array(30 + nameBytes.length);
     const localView = new DataView(localHeader.buffer);
+
     writeUint32(localView, 0, 0x04034b50);
     writeUint16(localView, 4, 20);
     writeUint16(localView, 6, 0);
@@ -473,11 +582,13 @@ function createZip(files: Array<{ name: string; content: string }>): Blob {
     writeUint32(localView, 22, data.length);
     writeUint16(localView, 26, nameBytes.length);
     writeUint16(localView, 28, 0);
+
     localHeader.set(nameBytes, 30);
     localParts.push(localHeader, data);
 
     const centralHeader = new Uint8Array(46 + nameBytes.length);
     const centralView = new DataView(centralHeader.buffer);
+
     writeUint32(centralView, 0, 0x02014b50);
     writeUint16(centralView, 4, 20);
     writeUint16(centralView, 6, 20);
@@ -495,6 +606,7 @@ function createZip(files: Array<{ name: string; content: string }>): Blob {
     writeUint16(centralView, 36, 0);
     writeUint32(centralView, 38, 0);
     writeUint32(centralView, 42, localOffset);
+
     centralHeader.set(nameBytes, 46);
     centralParts.push(centralHeader);
 
@@ -502,8 +614,10 @@ function createZip(files: Array<{ name: string; content: string }>): Blob {
   });
 
   const centralSize = centralParts.reduce((sum, part) => sum + part.length, 0);
+
   const endRecord = new Uint8Array(22);
   const endView = new DataView(endRecord.buffer);
+
   writeUint32(endView, 0, 0x06054b50);
   writeUint16(endView, 4, 0);
   writeUint16(endView, 6, 0);
@@ -518,17 +632,29 @@ function createZip(files: Array<{ name: string; content: string }>): Blob {
     ...centralParts.map((part) => part as unknown as BlobPart),
     endRecord as unknown as BlobPart,
   ];
+
   return new Blob(blobParts, { type: 'application/zip' });
 }
 
+/**
+ * ============================================
+ * BLOCK: Download Actions
+ * VERSION: 1.1.0
+ * PURPOSE:
+ * Скачивание HTML и ZIP-бандла проекта.
+ * ============================================
+ */
 function downloadBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
+  const anchor = document.createElement('a');
+
+  anchor.href = url;
+  anchor.download = filename;
+
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+
   URL.revokeObjectURL(url);
 }
 
@@ -545,21 +671,12 @@ export function downloadProjectBundle(project: Project): void {
   ];
 
   const zip = createZip(bundleFiles);
-  downloadBlob(zip, `${project.meta.name.replace(/\s+/g, '_') || 'ui_builder_project'}.zip`);
+  downloadBlob(zip, buildZipDownloadName(project));
 }
-
-// ============================================
-// ЭКСПОРТ ФАЙЛА
-// ============================================
 
 export function downloadHTML(project: Project): void {
   const html = generateHTML(project);
   const blob = new Blob([html], { type: 'text/html' });
-  downloadBlob(blob, `${project.meta.name.replace(/\s+/g, '_')}.html`);
-}
 
-
-export function resolveProjectHtml(project: Project): string {
-  const override = project.customLogic?.htmlOverride?.trim();
-  return override ? override : generateHTML(project);
+  downloadBlob(blob, buildHtmlDownloadName(project));
 }

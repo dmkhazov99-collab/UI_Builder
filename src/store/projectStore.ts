@@ -453,7 +453,9 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
     }));
   },
 
-  updatePage: (pageId, updates) =>
+  updatePage: (pageId, updates) => {
+    get().pushUndo();
+
     set((state) => ({
       project: touchProject({
         ...state.project,
@@ -461,7 +463,8 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
           page.id === pageId ? { ...page, ...updates } : page
         ),
       }),
-    })),
+    }));
+  },
 
   // ==========================================
   // СЕКЦИИ
@@ -548,7 +551,9 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
     });
   },
 
-  updateSection: (pageId, sectionId, updates) =>
+  updateSection: (pageId, sectionId, updates) => {
+    get().pushUndo();
+
     set((state) => ({
       project: touchProject({
         ...state.project,
@@ -563,7 +568,8 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
             : page
         ),
       }),
-    })),
+    }));
+  },
 
   moveSection: (pageId, sectionId, direction) => {
     get().pushUndo();
@@ -598,7 +604,9 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
   // ЗАГОЛОВКИ И КОНТЕНТ
   // ==========================================
 
-  updateHeader: (pageId, sectionId, updates) =>
+  updateHeader: (pageId, sectionId, updates) => {
+    get().pushUndo();
+
     set((state) => ({
       project: touchProject({
         ...state.project,
@@ -630,9 +638,12 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
             : page
         ),
       }),
-    })),
+    }));
+  },
 
-  updateContent: (pageId, sectionId, updates) =>
+  updateContent: (pageId, sectionId, updates) => {
+    get().pushUndo();
+
     set((state) => ({
       project: touchProject({
         ...state.project,
@@ -660,7 +671,8 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
             : page
         ),
       }),
-    })),
+    }));
+  },
 
   // ==========================================
   // БЛОКИ
@@ -726,7 +738,9 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
     }));
   },
 
-  updateBlock: (pageId, sectionId, blockId, updates) =>
+  updateBlock: (pageId, sectionId, blockId, updates) => {
+    get().pushUndo();
+
     set((state) => ({
       project: touchProject({
         ...state.project,
@@ -753,7 +767,8 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
             : page
         ),
       }),
-    })),
+    }));
+  },
 
   moveBlock: (pageId, sectionId, blockId, direction) => {
     get().pushUndo();
@@ -969,7 +984,9 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
     });
   },
 
-  updateProjectFile: (fileId, updates) =>
+  updateProjectFile: (fileId, updates) => {
+    get().pushUndo();
+
     set((state) => ({
       project: touchProject({
         ...state.project,
@@ -994,7 +1011,8 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
             : file
         ),
       }),
-    })),
+    }));
+  },
 
   removeProjectFile: (fileId) => {
     get().pushUndo();
@@ -1055,13 +1073,16 @@ export const useProjectStore = create<ProjectState & ProjectActions>((set, get) 
   // ЛОГИКА
   // ==========================================
 
-  updateCustomLogic: (updates) =>
+  updateCustomLogic: (updates) => {
+    get().pushUndo();
+
     set((state) => ({
       project: touchProject({
         ...state.project,
         customLogic: { ...state.project.customLogic, ...updates },
       }),
-    })),
+    }));
+  },
 
   // ==========================================
   // СБРОС

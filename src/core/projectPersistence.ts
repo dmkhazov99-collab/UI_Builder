@@ -1,7 +1,49 @@
+/**
+ * ============================================
+ * MODULE: Project Storage Persistence
+ * VERSION: 1.0.0
+ * ROLE:
+ * Локальный persistence-слой для сохранения и
+ * чтения проектов UI builder из browser localStorage.
+ *
+ * RESPONSIBILITIES:
+ * - Читать список сохраненных проектов
+ * - Валидировать и нормализовать storage records
+ * - Сохранять и обновлять project records
+ * - Удалять и получать проекты по id
+ *
+ * DEPENDS ON:
+ * - Project type
+ * - window.localStorage
+ *
+ * USED BY:
+ * - project management UI
+ * - save/load flows
+ * - project selection dialogs
+ *
+ * RULES:
+ * - Только persistence logic
+ * - Без UI-логики
+ * - Без runtime/export HTML logic
+ * - localStorage считается внешней и потенциально грязной границей данных
+ *
+ * SECURITY:
+ * - Данные из localStorage не считаются полностью доверенными
+ * - Перед использованием records проходят минимальную shape-проверку
+ * - Ошибки чтения/записи не должны ломать builder UI
+ * ============================================
+ */
+
 import type { Project } from '@/types/project';
 
-const STORAGE_KEY = 'ui-builder-projects-v1';
-
+/**
+ * ============================================
+ * BLOCK: Shared Types
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Публичные и внутренние типы persistence-слоя.
+ * ============================================
+ */
 export interface StoredProjectRecord {
   id: string;
   name: string;
@@ -12,63 +54,140 @@ export interface StoredProjectRecord {
   project: Project;
 }
 
-function canUseStorage() {
+interface StoredProjectTextUpdates {
+  name?: string;
+  description?: string;
+}
+
+/**
+ * ============================================
+ * BLOCK: Storage Constants
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Константы browser persistence слоя.
+ * ============================================
+ */
+const STORAGE_KEY = 'ui-builder-projects-v1';
+const DEFAULT_PROJECT_NAME = 'Без названия';
+
+/**
+ * ============================================
+ * BLOCK: Storage Guards And Normalizers
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Проверки среды, shape-валидация storage records
+ * и нормализация текстовых полей.
+ * ============================================
+ */
+function canUseStorage(): boolean {
   return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isProjectLike(value: unknown): value is Project {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  const meta = value.meta;
+
+  return isPlainObject(meta) && typeof meta.id === 'string';
+}
+
+function isStoredProjectRecord(value: unknown): value is StoredProjectRecord {
+  if (!isPlainObject(value)) {
+    return false;
+  }
+
+  return (
+    typeof value.id === 'string' &&
+    typeof value.name === 'string' &&
+    typeof value.description === 'string' &&
+    typeof value.createdAt === 'string' &&
+    typeof value.updatedAt === 'string' &&
+    typeof value.version === 'string' &&
+    isProjectLike(value.project)
+  );
+}
+
+function normalizeText(value?: string): string {
+  return (value ?? '').trim();
+}
+
+function resolveProjectName(value?: string): string {
+  return normalizeText(value) || DEFAULT_PROJECT_NAME;
+}
+
+/**
+ * ============================================
+ * BLOCK: Internal Storage IO
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Безопасное чтение и запись массива project records
+ * из browser localStorage.
+ * ============================================
+ */
 function readAll(): StoredProjectRecord[] {
-  if (!canUseStorage()) return [];
+  if (!canUseStorage()) {
+    return [];
+  }
+
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed as StoredProjectRecord[];
+
+    if (!raw) {
+      return [];
+    }
+
+    const parsed: unknown = JSON.parse(raw);
+
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.filter(isStoredProjectRecord);
   } catch {
-    window.localStorage.removeItem(STORAGE_KEY);
+    try {
+      window.localStorage.removeItem(STORAGE_KEY);
+    } catch {
+      // Ignore cleanup failures to keep UI stable.
+    }
+
     return [];
   }
 }
 
-function writeAll(records: StoredProjectRecord[]) {
-  if (!canUseStorage()) return;
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+function writeAll(records: StoredProjectRecord[]): void {
+  if (!canUseStorage()) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+  } catch {
+    // Ignore storage write failures to avoid breaking the builder UI.
+  }
 }
 
-export function listStoredProjects(): StoredProjectRecord[] {
-  return readAll().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-}
-
-export function renameStoredProject(projectId: string, updates: { name?: string; description?: string }) {
-  const records = readAll();
-  const target = records.find((item) => item.id === projectId);
-  if (!target) return null;
-
+/**
+ * ============================================
+ * BLOCK: Record Builders
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Сборка новых и обновленных persistence records
+ * без неявной мутации исходных объектов.
+ * ============================================
+ */
+function createStoredProjectRecord(
+  project: Project,
+  overrides?: StoredProjectTextUpdates,
+): StoredProjectRecord {
   const now = new Date().toISOString();
-  const name = (updates.name ?? target.name).trim() || 'Без названия';
-  const description = (updates.description ?? target.description).trim();
-
-  target.name = name;
-  target.description = description;
-  target.updatedAt = now;
-  target.project = {
-    ...target.project,
-    meta: {
-      ...target.project.meta,
-      name,
-      description,
-      updatedAt: now,
-    },
-  };
-
-  writeAll(records);
-  return target;
-}
-
-export function saveStoredProject(project: Project, overrides?: { name?: string; description?: string }) {
-  const name = (overrides?.name ?? project.meta.name ?? '').trim() || 'Без названия';
-  const description = (overrides?.description ?? project.meta.description ?? '').trim();
-  const now = new Date().toISOString();
+  const name = resolveProjectName(overrides?.name ?? project.meta.name);
+  const description = normalizeText(overrides?.description ?? project.meta.description);
 
   const nextProject: Project = {
     ...project,
@@ -81,7 +200,7 @@ export function saveStoredProject(project: Project, overrides?: { name?: string;
     },
   };
 
-  const record: StoredProjectRecord = {
+  return {
     id: nextProject.meta.id,
     name,
     description,
@@ -90,20 +209,86 @@ export function saveStoredProject(project: Project, overrides?: { name?: string;
     version: nextProject.meta.version,
     project: nextProject,
   };
+}
 
+function updateStoredProjectRecord(
+  record: StoredProjectRecord,
+  updates: StoredProjectTextUpdates,
+): StoredProjectRecord {
+  const now = new Date().toISOString();
+  const name = resolveProjectName(updates.name ?? record.name);
+  const description = normalizeText(updates.description ?? record.description);
+
+  const nextProject: Project = {
+    ...record.project,
+    meta: {
+      ...record.project.meta,
+      name,
+      description,
+      updatedAt: now,
+    },
+  };
+
+  return {
+    ...record,
+    name,
+    description,
+    updatedAt: now,
+    project: nextProject,
+  };
+}
+
+/**
+ * ============================================
+ * BLOCK: Public API
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Публичный persistence API для работы с
+ * сохраненными проектами builder.
+ * ============================================
+ */
+export function listStoredProjects(): StoredProjectRecord[] {
+  return [...readAll()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export function renameStoredProject(
+  projectId: string,
+  updates: StoredProjectTextUpdates,
+): StoredProjectRecord | null {
   const records = readAll();
-  const filtered = records.filter((item) => item.id !== record.id);
-  filtered.push(record);
-  writeAll(filtered);
+  const targetRecord = records.find((item) => item.id === projectId);
 
-  return record;
+  if (!targetRecord) {
+    return null;
+  }
+
+  const nextRecord = updateStoredProjectRecord(targetRecord, updates);
+  const nextRecords = records.map((item) => (item.id === projectId ? nextRecord : item));
+
+  writeAll(nextRecords);
+
+  return nextRecord;
 }
 
-export function deleteStoredProject(projectId: string) {
-  const records = readAll().filter((item) => item.id !== projectId);
-  writeAll(records);
+export function saveStoredProject(
+  project: Project,
+  overrides?: StoredProjectTextUpdates,
+): StoredProjectRecord {
+  const nextRecord = createStoredProjectRecord(project, overrides);
+  const nextRecords = readAll().filter((item) => item.id !== nextRecord.id);
+
+  nextRecords.push(nextRecord);
+  writeAll(nextRecords);
+
+  return nextRecord;
 }
 
-export function getStoredProject(projectId: string) {
+export function deleteStoredProject(projectId: string): void {
+  const nextRecords = readAll().filter((item) => item.id !== projectId);
+
+  writeAll(nextRecords);
+}
+
+export function getStoredProject(projectId: string): StoredProjectRecord | null {
   return readAll().find((item) => item.id === projectId) ?? null;
 }

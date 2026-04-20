@@ -1,12 +1,52 @@
 <!doctype html>
-<html lang="en">
+<html lang="ru">
   <head>
+    <!--
+      ============================================
+      MODULE: HTML Bootstrap Container
+      VERSION: 1.0.0
+      ROLE:
+      Корневой HTML-контейнер приложения UI builder.
+      Предоставляет документ-оболочку для browser bootstrap
+      и точку монтирования React root.
+      
+      RESPONSIBILITIES:
+      - Определять базовый HTML document shell
+      - Предоставлять root container для React
+      - Подключать entrypoint приложения
+      
+      DEPENDS ON:
+      - /src/main.tsx
+      
+      USED BY:
+      - browser runtime
+      - Vite dev/build pipeline
+      
+      RULES:
+      - Не содержит builder logic
+      - Не содержит preview/runtime/export logic
+      - Не содержит пользовательский HTML проекта
+      
+      SECURITY:
+      - Пользовательский HTML не должен монтироваться напрямую в этот документ
+      - Root container используется только для trusted application shell
+      ============================================
+    -->
+
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>UI Builder - Standard Interface Constructor</title>
+    <meta
+      name="description"
+      content="Локальное builder-приложение для стандартизированной сборки интерфейсов."
+    />
+    <meta name="theme-color" content="#0c1016" />
+
+    <title>UI Builder</title>
   </head>
   <body>
+    <!-- Root application shell mount point -->
     <div id="root"></div>
+
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

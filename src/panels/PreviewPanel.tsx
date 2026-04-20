@@ -1,80 +1,110 @@
-import { useMemo } from 'react';
-import { Monitor, Tablet, Smartphone, RefreshCcw } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { useProjectStore } from '@/store/projectStore';
-import { resolveProjectHtml } from '@/core/htmlExporter';
+/**
+ * ============================================
+ * MODULE: Preview Panel
+ * VERSION: 1.2.0
+ * ROLE:
+ * Изолированно рендерит runtime HTML проекта в iframe.
+ *
+ * RESPONSIBILITIES:
+ * - читать единый HTML source layer
+ * - рендерить runtime HTML в iframe
+ * - поддерживать desktop/tablet/mobile frame modes
+ * - уметь принудительно перемонтировать iframe
+ *
+ * DEPENDS ON:
+ * - useProjectStore()
+ * - getProjectPreviewHtml()
+ *
+ * USED BY:
+ * - App.tsx
+ *
+ * RULES:
+ * - preview не должен иметь свой отдельный pipeline сборки HTML
+ * - iframe должен рендерить тот же HTML, что показывает CodePanel
+ * - refresh должен реально remount-ить iframe
+ *
+ * SECURITY:
+ * - preview рендерится только в iframe
+ * - allow-same-origin не используется
+ * - builder DOM и preview DOM изолированы
+ * ============================================
+ */
 
-const frameWidths = {
+import { useMemo, useState } from 'react';
+import { Monitor, RefreshCcw, Smartphone, Tablet } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { getProjectPreviewHtml } from '@/core/projectRuntimeHtml';
+import { useProjectStore } from '@/store/projectStore';
+
+const FRAME_WIDTHS = {
   desktop: '100%',
   tablet: '768px',
   mobile: '375px',
 } as const;
 
-const frameLabels = {
+const FRAME_LABELS = {
   desktop: 'Desktop preview',
   tablet: 'Tablet preview',
   mobile: 'Mobile preview',
 } as const;
 
-function injectPreviewRuntime(html: string): string {
-  const previewRuntime = `
-<script>
-(function () {
-  if (!window.google) window.google = {};
-  if (!window.google.script) window.google.script = {};
-  if (!window.google.script.run) {
-    const chain = {
-      withSuccessHandler: function () { return this; },
-      withFailureHandler: function () { return this; },
-      withUserObject: function () { return this; }
-    };
-    window.google.script.run = new Proxy(chain, {
-      get: function(target, prop) {
-        if (prop in target) return target[prop];
-        return function() {
-          console.info('[UI Builder Preview] google.script.run mock call:', String(prop), Array.from(arguments));
-          return target;
-        };
-      }
-    });
-  }
-})();
-</script>`;
-
-  if (html.includes('</head>')) {
-    return html.replace('</head>', `${previewRuntime}\n</head>`);
-  }
-  return `${previewRuntime}\n${html}`;
-}
-
 export function PreviewPanel() {
   const { project, viewMode } = useProjectStore();
+  const [refreshToken, setRefreshToken] = useState(0);
 
-  const srcDoc = useMemo(() => injectPreviewRuntime(resolveProjectHtml(project)), [project]);
-  const previewKey = useMemo(() => `${viewMode}-${srcDoc.length}-${project.meta.updatedAt}`, [viewMode, srcDoc, project.meta.updatedAt]);
-  const frameWidth = frameWidths[viewMode];
+  /**
+   * ============================================
+   * BLOCK: Runtime HTML Source
+   * VERSION: 1.0.0
+   * PURPOSE:
+   * Получить тот же runtime HTML, что показывается в CodePanel.
+   * ============================================
+   */
+  const runtimeHtml = useMemo(() => getProjectPreviewHtml(project), [project]);
+
+  /**
+   * ============================================
+   * BLOCK: Iframe Identity
+   * VERSION: 1.0.0
+   * PURPOSE:
+   * Формировать стабильный key для реального remount iframe.
+   * ============================================
+   */
+  const iframeKey = useMemo(() => {
+    return `${viewMode}-${project.meta.updatedAt}-${runtimeHtml.length}-${refreshToken}`;
+  }, [project.meta.updatedAt, refreshToken, runtimeHtml.length, viewMode]);
+
+  const frameWidth = FRAME_WIDTHS[viewMode];
+  const frameLabel = FRAME_LABELS[viewMode];
+
+  const handleRefresh = () => {
+    setRefreshToken((value) => value + 1);
+  };
 
   return (
-    <div className="flex-1 min-h-0 bg-[#0F1012] overflow-auto">
+    <div className="flex-1 min-h-0 overflow-auto bg-[#0F1012]">
       <div className="sticky top-0 z-10 border-b border-white/10 bg-[#111827]/95 backdrop-blur">
         <div className="flex items-center justify-between px-4 py-3">
           <div>
             <div className="text-sm font-semibold text-white">Preview</div>
             <div className="text-xs text-white/60">
-              Режим runtime: без выделения блоков, без drag-and-drop, только поведение готового интерфейса.
+              Режим runtime: builder остаётся изолированным, preview рендерится отдельно.
             </div>
           </div>
+
           <div className="flex items-center gap-2 text-xs text-white/70">
             {viewMode === 'desktop' && <Monitor className="h-4 w-4" />}
             {viewMode === 'tablet' && <Tablet className="h-4 w-4" />}
             {viewMode === 'mobile' && <Smartphone className="h-4 w-4" />}
-            <span>{frameLabels[viewMode]}</span>
+
+            <span>{frameLabel}</span>
+
             <Button
               type="button"
               variant="ghost"
               size="sm"
               className="h-8 gap-2 text-white/80 hover:bg-white/10 hover:text-white"
-              onClick={() => window.dispatchEvent(new Event('resize'))}
+              onClick={handleRefresh}
             >
               <RefreshCcw className="h-4 w-4" />
               Обновить
@@ -88,12 +118,12 @@ export function PreviewPanel() {
           className="mx-auto transition-all duration-300"
           style={{ width: frameWidth, maxWidth: '100%' }}
         >
-          <div className="rounded-2xl border border-white/10 bg-white shadow-2xl overflow-hidden">
+          <div className="overflow-hidden rounded-2xl border border-white/10 bg-white shadow-2xl">
             <iframe
-              key={previewKey}
+              key={iframeKey}
               title="UI Builder Preview"
-              srcDoc={srcDoc}
-              sandbox="allow-scripts allow-forms allow-modals allow-same-origin"
+              srcDoc={runtimeHtml}
+              sandbox="allow-scripts allow-forms allow-modals"
               className="block w-full bg-white"
               style={{ minHeight: 'calc(100vh - 220px)', border: 0 }}
             />

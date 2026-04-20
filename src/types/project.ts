@@ -1,23 +1,72 @@
 /**
- * СИСТЕМА СТАНДАРТА HTML ИНТЕРФЕЙСА
- * Внутренний формат проекта UI Builder
+ * ============================================
+ * MODULE: Project Domain Model
+ * VERSION: 1.3.0
+ * ROLE:
+ * Единая доменная схема UI Builder проекта.
+ *
+ * RESPONSIBILITIES:
+ * - описывать структуру Project
+ * - задавать типы builder-сущностей
+ * - предоставлять базовые нормализаторы
+ * - хранить стандартные design-system значения
+ *
+ * DEPENDS ON:
+ * - none
+ *
+ * USED BY:
+ * - projectStore
+ * - Canvas
+ * - PropertiesPanel
+ * - htmlExporter
+ * - persistence layer
+ *
+ * RULES:
+ * - доменные типы должны оставаться стабильными
+ * - helper-функции не должны содержать UI/runtime логики
+ * - нормализаторы должны быть pure
+ *
+ * SECURITY:
+ * - файл описывает только контракт данных
+ * - не содержит исполнения пользовательского кода
+ * ============================================
  */
 
-// ============================================
-// БАЗОВЫЕ ТИПЫ
-// ============================================
-
+/**
+ * ============================================
+ * BLOCK: Primitive Domain Types
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Базовые типы builder-домена.
+ * ============================================
+ */
 export type BlockType = 'block-info' | 'block-button';
 export type LibraryCategoryId = 'base' | 'custom';
 export type BlockMode = 'clip' | 'scroll' | 'auto' | 'grow';
 export type SpanValue = number;
 export type RowSpanValue = number;
 
+/**
+ * ============================================
+ * BLOCK: Block Size Limits
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Ограничения размеров builder-блоков.
+ * ============================================
+ */
 export const MIN_BLOCK_SPAN = 1;
 export const MAX_BLOCK_SPAN = 6;
 export const MIN_BLOCK_ROW_SPAN = 1;
 export const MAX_BLOCK_ROW_SPAN = 30;
 
+/**
+ * ============================================
+ * BLOCK: Numeric Normalization
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Унификация числовых значений builder-структуры.
+ * ============================================
+ */
 export function clampNumber(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;
   return Math.min(max, Math.max(min, Math.round(value)));
@@ -39,10 +88,14 @@ export function normalizeBlockType(value?: string): BlockType {
   return value === 'block-button' ? 'block-button' : 'block-info';
 }
 
-// ============================================
-// МЕТАИНФОРМАЦИЯ ПРОЕКТА
-// ============================================
-
+/**
+ * ============================================
+ * BLOCK: Project Metadata
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Метаданные проекта.
+ * ============================================
+ */
 export interface ProjectMeta {
   id: string;
   name: string;
@@ -52,10 +105,14 @@ export interface ProjectMeta {
   version: string;
 }
 
-// ============================================
-// ДИЗАЙН-СИСТЕМА
-// ============================================
-
+/**
+ * ============================================
+ * BLOCK: Design System
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Контракт визуальной системы проекта.
+ * ============================================
+ */
 export interface DesignSystem {
   colors: ColorSystem;
   typography: TypographySystem;
@@ -103,10 +160,14 @@ export interface GridSystem {
   headerHeight: number;
 }
 
-// ============================================
-// СТРУКТУРА СТРАНИЦЫ
-// ============================================
-
+/**
+ * ============================================
+ * BLOCK: Page Structure
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Основная иерархия страницы builder-проекта.
+ * ============================================
+ */
 export interface Page {
   id: string;
   name: string;
@@ -139,10 +200,14 @@ export interface ContentIsolator {
   endpoint?: ContentEndpoint;
 }
 
-// ============================================
-// ENDPOINT'Ы (ТОЧКИ РАСШИРЕНИЯ)
-// ============================================
-
+/**
+ * ============================================
+ * BLOCK: Extension Endpoints
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Точки расширения header/content областей.
+ * ============================================
+ */
 export interface HeaderEndpoint {
   id: string;
   name: string;
@@ -158,7 +223,6 @@ export interface ContentEndpoint {
   html: string;
   css: string;
 }
-
 
 export function createDefaultHeaderEndpoint(title = 'Новая секция'): HeaderEndpoint {
   return {
@@ -180,10 +244,14 @@ export function createDefaultContentEndpoint(): ContentEndpoint {
   };
 }
 
-// ============================================
-// БЛОКИ
-// ============================================
-
+/**
+ * ============================================
+ * BLOCK: Blocks
+ * VERSION: 1.1.0
+ * PURPOSE:
+ * Контракт builder-блоков и их содержимого.
+ * ============================================
+ */
 export interface Block {
   id: string;
   name: string;
@@ -211,7 +279,10 @@ export interface BlockChild {
   style?: Record<string, string>;
 }
 
-export function normalizeBlock<T extends Partial<Block>>(block: T): T & Pick<Block, 'name' | 'description' | 'type' | 'span' | 'rowSpan' | 'mode'> {
+export function normalizeBlock<T extends Partial<Block>>(
+  block: T
+): T &
+  Pick<Block, 'name' | 'description' | 'type' | 'span' | 'rowSpan' | 'mode'> {
   return {
     ...block,
     name: typeof block.name === 'string' && block.name.trim() ? block.name : 'Блок',
@@ -223,10 +294,14 @@ export function normalizeBlock<T extends Partial<Block>>(block: T): T & Pick<Blo
   };
 }
 
-// ============================================
-// БИБЛИОТЕКА КОМПОНЕНТОВ
-// ============================================
-
+/**
+ * ============================================
+ * BLOCK: Component Library
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Пользовательская и базовая библиотека блоков.
+ * ============================================
+ */
 export interface ComponentLibrary {
   categories: ComponentCategory[];
   blocks: LibraryBlock[];
@@ -248,10 +323,14 @@ export interface LibraryBlock {
   block: Block;
 }
 
-// ============================================
-// ЛОГИКА И ПРИВЯЗКИ
-// ============================================
-
+/**
+ * ============================================
+ * BLOCK: Custom Logic And Bindings
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Пользовательская логика, файлы и data/event bindings.
+ * ============================================
+ */
 export interface CustomLogic {
   javascript: string;
   css: string;
@@ -283,10 +362,14 @@ export interface Binding {
   action: string;
 }
 
-// ============================================
-// АССЕТЫ
-// ============================================
-
+/**
+ * ============================================
+ * BLOCK: Assets
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Встроенные проектные ассеты.
+ * ============================================
+ */
 export interface Asset {
   id: string;
   type: 'image' | 'svg' | 'font';
@@ -294,10 +377,14 @@ export interface Asset {
   data: string;
 }
 
-// ============================================
-// КОНФИГУРАЦИЯ ЭКСПОРТА
-// ============================================
-
+/**
+ * ============================================
+ * BLOCK: Export Configuration
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Настройки итогового export pipeline.
+ * ============================================
+ */
 export interface ExportConfig {
   format: 'html';
   includeAssets: boolean;
@@ -306,10 +393,14 @@ export interface ExportConfig {
   inlineScripts: boolean;
 }
 
-// ============================================
-// ПОЛНЫЙ ПРОЕКТ
-// ============================================
-
+/**
+ * ============================================
+ * BLOCK: Root Project Contract
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Полный контракт проекта UI Builder.
+ * ============================================
+ */
 export interface Project {
   meta: ProjectMeta;
   designSystem: DesignSystem;
@@ -322,10 +413,14 @@ export interface Project {
   exportConfig: ExportConfig;
 }
 
-// ============================================
-// СОСТОЯНИЕ РЕДАКТОРА
-// ============================================
-
+/**
+ * ============================================
+ * BLOCK: Editor State
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Состояние runtime-редактора поверх Project.
+ * ============================================
+ */
 export interface EditorState {
   project: Project;
   selectedElement: SelectedElement | null;
@@ -347,10 +442,14 @@ export interface SelectedElement {
   parentId?: string;
 }
 
-// ============================================
-// СТАНДАРТНЫЕ ЗНАЧЕНИЯ
-// ============================================
-
+/**
+ * ============================================
+ * BLOCK: Default Design System Values
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Стандартные значения builder design system.
+ * ============================================
+ */
 export const DEFAULT_GRID_SYSTEM: GridSystem = {
   maxWidth: 900,
   columns: 6,

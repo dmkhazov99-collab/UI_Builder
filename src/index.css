@@ -19,7 +19,7 @@
     --bg-border: #243246;
     --text-primary: #FFFFFF;
     --text-secondary: #A9B4C4;
-    --accent: #2A80F4;
+    --builder-accent: #2A80F4;
     --line-subtle: rgba(143, 180, 255, 0.12);
     --line-default: rgba(143, 180, 255, 0.18);
     --line-strong: rgba(143, 180, 255, 0.3);
@@ -100,7 +100,7 @@
     color: var(--text-primary);
   }
   
-  .text-base { 
+  .ui-text-base { 
     font-size: 16px; 
     color: var(--text-primary);
   }
@@ -142,7 +142,7 @@
   
   .block-button:hover {
     background: var(--bg-secondary);
-    border-color: var(--accent);
+    border-color: var(--builder-accent);
   }
   
   .block-button:active {
@@ -250,7 +250,7 @@
    ============================================ */
 
 ::selection {
-  background: var(--accent);
+  background: var(--builder-accent);
   color: white;
 }
 
