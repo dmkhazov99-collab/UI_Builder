@@ -1,7 +1,7 @@
 /**
  * ============================================
  * MODULE: Code Panel
- * VERSION: 1.1.0
+ * VERSION: 1.2.0
  * ROLE:
  * Показывает полный runtime HTML проекта в read-only виде.
  *
@@ -21,6 +21,7 @@
  * - не содержит собственной логики сборки HTML
  * - не исполняет пользовательский код
  * - показывает тот же HTML, который получает PreviewPanel
+ * - не добавляет отдельную "шапку" над кодом
  *
  * SECURITY:
  * - HTML здесь отображается только как текст
@@ -47,13 +48,6 @@ export function CodePanel() {
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-      <div className="border-b px-4 py-3">
-        <h2 className="text-sm font-semibold">Generated index.html</h2>
-        <p className="text-xs text-muted-foreground">
-          Панель показывает тот же runtime HTML, который рендерится в Preview.
-        </p>
-      </div>
-
       <div className="min-h-0 flex-1 overflow-auto">
         <pre className="min-h-full whitespace-pre-wrap break-words p-4 text-xs leading-5">
           <code>{runtimeHtml}</code>

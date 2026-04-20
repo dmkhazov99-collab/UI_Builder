@@ -1,7 +1,7 @@
 /**
  * ============================================
  * MODULE: Builder Canvas
- * VERSION: 1.2.0
+ * VERSION: 1.3.0
  * ROLE:
  * Центральный визуальный холст builder-интерфейса.
  *
@@ -23,6 +23,7 @@
  * - Canvas только визуализирует builder state
  * - selection не должна зависеть от runtime preview
  * - builder и preview остаются разными слоями
+ * - block-placeholder не должен огибаться скруглением в editor layer
  *
  * SECURITY:
  * - HTML здесь остаётся trusted-only
@@ -126,7 +127,7 @@ function SelectionOverlay({
 /**
  * ============================================
  * BLOCK: Block Component
- * VERSION: 1.1.0
+ * VERSION: 1.2.0
  * PURPOSE:
  * Визуализация блока внутри section content grid.
  * ============================================
@@ -140,6 +141,7 @@ interface BlockComponentProps {
 function BlockComponent({ block, isSelected, onSelect }: BlockComponentProps) {
   const modeClass = block.mode !== 'clip' ? `block-${block.mode}` : '';
   const isButton = block.type === 'block-button';
+  const isPlaceholder = block.type === 'block-placeholder';
 
   return (
     <div
@@ -154,10 +156,10 @@ function BlockComponent({ block, isSelected, onSelect }: BlockComponentProps) {
         flexDirection: 'column',
         width: '100%',
         minHeight: 0,
-        background: isButton ? '#272728' : '#1A1A1C',
+        background: isPlaceholder ? 'transparent' : isButton ? '#272728' : '#1A1A1C',
         color: '#FFFFFF',
         border: `1px solid ${isSelected ? '#2A80F4' : '#313133'}`,
-        borderRadius: '12px',
+        borderRadius: isPlaceholder ? '0' : '12px',
         justifyContent: isButton ? 'center' : undefined,
         alignItems: isButton ? 'center' : undefined,
         gridColumn: `span ${block.span}`,
@@ -171,7 +173,7 @@ function BlockComponent({ block, isSelected, onSelect }: BlockComponentProps) {
       <TrustedHtml
         className="block-content"
         style={{
-          padding: '12px',
+          padding: isPlaceholder ? '0' : '12px',
           height: block.mode === 'auto' || block.mode === 'grow' ? 'auto' : '100%',
           boxSizing: 'border-box',
           overflowY: isButton ? 'hidden' : block.mode === 'scroll' ? 'auto' : 'hidden',
@@ -181,6 +183,7 @@ function BlockComponent({ block, isSelected, onSelect }: BlockComponentProps) {
           justifyContent: isButton ? 'center' : undefined,
           textAlign: isButton ? 'center' : undefined,
           width: '100%',
+          borderRadius: isPlaceholder ? '0' : undefined,
         }}
         html={block.content.html}
       />

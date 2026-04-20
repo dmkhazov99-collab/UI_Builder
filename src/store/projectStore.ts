@@ -117,27 +117,52 @@ export const createNewProject = (): Project => ({
   },
 });
 
+const BLOCK_TEMPLATE_CONFIG: Record<
+  BlockType,
+  {
+    name: string;
+    html: string;
+    text: string;
+  }
+> = {
+  'block-info': {
+    name: 'Блок',
+    html: '<div class="h3">Новый блок</div><div class="text-small">Описание блока</div>',
+    text: 'Новый блок',
+  },
+  'block-button': {
+    name: 'Кнопка',
+    html: '<div class="text-base">Кнопка</div>',
+    text: 'Кнопка',
+  },
+  'block-placeholder': {
+    name: 'Заглушка',
+    html: '',
+    text: '',
+  },
+};
+
 export const createNewBlock = (
   type: BlockType = 'block-info',
-  span: SpanValue = 1,
-  rowSpan: RowSpanValue = 1
-): Block =>
-  normalizeBlock({
+  span: SpanValue = 2,
+  rowSpan: RowSpanValue = 3
+): Block => {
+  const template = BLOCK_TEMPLATE_CONFIG[type];
+
+  return normalizeBlock({
     id: uuidv4(),
-    name: type === 'block-info' ? 'Блок' : 'Кнопка',
+    name: template.name,
     description: '',
     type,
     span,
     rowSpan,
     mode: 'clip',
     content: {
-      html:
-        type === 'block-info'
-          ? '<div class="h3">Новый блок</div><div class="text-small">Описание блока</div>'
-          : '<div class="text-base">Кнопка</div>',
-      text: type === 'block-info' ? 'Новый блок' : 'Кнопка',
+      html: template.html,
+      text: template.text,
     },
   });
+};
 
 export const cloneBlockForCanvas = (block: Block): Block =>
   normalizeBlock({

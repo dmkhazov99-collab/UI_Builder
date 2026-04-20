@@ -85,7 +85,7 @@ const SEARCH_INPUT_CLASS =
   'h-9 bg-[#111111] border-[#313133] text-white placeholder:text-[#6F6F73]';
 
 const FILTER_BUTTON_BASE_CLASS =
-  'h-8 px-3 text-xs border-[#313133] bg-[#111111] text-[#B0B0B0] hover:text-white hover:bg-[#181818]';
+  'h-8 w-full justify-center px-3 text-xs border-[#313133] bg-[#111111] text-[#B0B0B0] hover:text-white hover:bg-[#181818]';
 
 const FILTER_BUTTON_ACTIVE_CLASS =
   'bg-[#2A80F4]/15 text-white border-[#2A80F4]/40 hover:bg-[#2A80F4]/20';
@@ -104,18 +104,26 @@ const BASE_LIBRARY_ITEMS: BaseLibraryItem[] = [
   {
     id: 'base-info',
     category: 'base',
-    name: 'Информационный блок',
-    description: 'Обычный контентный блок для текста и HTML-содержимого.',
-    preview: '1×1 • info',
-    create: () => createNewBlock('block-info', 1, 1),
+    name: 'Базовый блок',
+    description: 'Блок для текста и HTML-содержимого.',
+    preview: '2×3 • info',
+    create: () => createNewBlock('block-info', 2, 3),
   },
   {
     id: 'base-button',
     category: 'base',
-    name: 'Кнопка',
-    description: 'Интерактивный button-style блок с центровкой содержимого.',
-    preview: '1×1 • button',
-    create: () => createNewBlock('block-button', 1, 1),
+    name: 'Блок кнопка',
+    description: 'Интерактивный блок.',
+    preview: '2×3 • button',
+    create: () => createNewBlock('block-button', 2, 3),
+  },
+    {
+    id: 'base-placeholder',
+    category: 'base',
+    name: 'Заглушка',
+    description: 'Пустой прозрачный блок для отступов, сетки и компоновки.',
+    preview: '2×3 • placeholder',
+    create: () => createNewBlock('block-placeholder', 2, 3),
   },
 ];
 
@@ -384,7 +392,7 @@ export function LibraryPanel() {
         <span className="font-medium text-white text-sm">Библиотека</span>
       </div>
 
-      <div className="shrink-0 border-b border-[#313133] p-4 space-y-3">
+      <div className="shrink-0 border-b border-[#313133] px-4 pt-4 pb-7 space-y-3">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6F6F73]" />
           <Input
@@ -395,7 +403,7 @@ export function LibraryPanel() {
           />
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="grid grid-cols-3 gap-2">
           <FilterSegmentButton
             label="Все"
             value="all"

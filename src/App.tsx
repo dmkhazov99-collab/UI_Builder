@@ -114,7 +114,7 @@ function App() {
       </div>
 
       <Toaster
-        position="bottom-right"
+        position="bottom-center"
         toastOptions={{
           style: TOASTER_STYLE,
         }}

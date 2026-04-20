@@ -40,7 +40,7 @@
  * Базовые типы builder-домена.
  * ============================================
  */
-export type BlockType = 'block-info' | 'block-button';
+export type BlockType = 'block-info' | 'block-button' | 'block-placeholder';
 export type LibraryCategoryId = 'base' | 'custom';
 export type BlockMode = 'clip' | 'scroll' | 'auto' | 'grow';
 export type SpanValue = number;
@@ -85,7 +85,9 @@ export function normalizeBlockMode(value?: string): BlockMode {
 }
 
 export function normalizeBlockType(value?: string): BlockType {
-  return value === 'block-button' ? 'block-button' : 'block-info';
+  if (value === 'block-button') return 'block-button';
+  if (value === 'block-placeholder') return 'block-placeholder';
+  return 'block-info';
 }
 
 /**

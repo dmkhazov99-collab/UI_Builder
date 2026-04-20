@@ -419,12 +419,17 @@ function BlockPropertiesPanel({
           </SelectTrigger>
 
           <SelectContent className="bg-[#1A1A1C] border-[#313133]">
+                      <SelectContent className="bg-[#1A1A1C] border-[#313133]">
             <SelectItem value="block-info" className="text-white">
               Обычный блок
             </SelectItem>
             <SelectItem value="block-button" className="text-white">
               Кнопка
             </SelectItem>
+            <SelectItem value="block-placeholder" className="text-white">
+              Заглушка
+            </SelectItem>
+          </SelectContent>
           </SelectContent>
         </Select>
       </div>

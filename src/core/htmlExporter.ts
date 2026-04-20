@@ -268,6 +268,18 @@ body {
   /* Base block styles only */
 }
 
+/* block-placeholder */
+.block-placeholder {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  border-radius: 0;
+}
+
+.block-placeholder .block-content {
+  padding: 0;
+}
+
 /* block-button */
 .block-button {
   cursor: pointer;
@@ -317,12 +329,6 @@ body {
 .block-auto .block-content,
 .block-grow .block-content {
   height: auto;
-}
-
-/* Extension points */
-.header-endpoint,
-.content-endpoint {
-  position: relative;
 }
 
 /* ============================================
