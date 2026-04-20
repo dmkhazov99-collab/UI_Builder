@@ -19,13 +19,13 @@ function canUseStorage() {
 function readAll(): StoredProjectRecord[] {
   if (!canUseStorage()) return [];
   try {
-    window.localStorage.removeItem(STORAGE_KEY);
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) return [];
     return parsed as StoredProjectRecord[];
   } catch {
+    window.localStorage.removeItem(STORAGE_KEY);
     return [];
   }
 }

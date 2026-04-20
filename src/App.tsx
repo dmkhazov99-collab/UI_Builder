@@ -9,6 +9,7 @@ import { Toolbar } from '@/panels/Toolbar';
 import { LibraryPanel } from '@/panels/LibraryPanel';
 import { Canvas } from '@/panels/Canvas';
 import { PreviewPanel } from '@/panels/PreviewPanel';
+import { CodePanel } from '@/panels/CodePanel';
 import { PropertiesPanel } from '@/panels/PropertiesPanel';
 import { useProjectStore } from '@/store/projectStore';
 import { Toaster } from '@/components/ui/sonner';
