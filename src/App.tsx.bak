@@ -10,6 +10,7 @@ import { LibraryPanel } from '@/panels/LibraryPanel';
 import { Canvas } from '@/panels/Canvas';
 import { PreviewPanel } from '@/panels/PreviewPanel';
 import { PropertiesPanel } from '@/panels/PropertiesPanel';
+import { CodePanel } from '@/panels/CodePanel';
 import { useProjectStore } from '@/store/projectStore';
 import { Toaster } from '@/components/ui/sonner';
 
