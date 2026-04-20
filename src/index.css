@@ -1,0 +1,343 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Система стандарта HTML интерфейса */
+    --max-width: 900px;
+    --header-height: 88px;
+    --grid-columns: 6;
+    --grid-gap: 12px;
+    --grid-row: 22px;
+    --block-padding: 12px;
+
+    /* Цветовая система */
+    --bg-primary: #0C1016;
+    --bg-secondary: #131922;
+    --bg-tertiary: #182233;
+    --bg-border: #243246;
+    --text-primary: #FFFFFF;
+    --text-secondary: #A9B4C4;
+    --accent: #2A80F4;
+    --line-subtle: rgba(143, 180, 255, 0.12);
+    --line-default: rgba(143, 180, 255, 0.18);
+    --line-strong: rgba(143, 180, 255, 0.3);
+    --surface-panel: rgba(19, 25, 34, 0.96);
+    --success: #02D15C;
+    --warning: #FCA400;
+    --error: #FF4053;
+
+    /* shadcn/ui переменные */
+    --background: 0 0% 7%;
+    --foreground: 0 0% 100%;
+    --card: 0 0% 10%;
+    --card-foreground: 0 0% 100%;
+    --popover: 0 0% 10%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 214 90% 56%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 0 0% 15%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 0 0% 15%;
+    --muted-foreground: 0 0% 69%;
+    --accent: 214 90% 56%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 354 100% 63%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 19%;
+    --input: 0 0% 19%;
+    --ring: 214 90% 56%;
+    --radius: 0.625rem;
+    --sidebar-background: 0 0% 10%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 214 90% 56%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 0 0% 15%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 0 0% 19%;
+    --sidebar-ring: 214 90% 56%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    box-sizing: border-box;
+  }
+  
+  html, body, #root {
+    @apply bg-background text-foreground;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    height: 100%;
+  }
+
+  body {
+    overflow: hidden;
+  }
+}
+
+@layer components {
+  /* ============================================
+     ТИПОГРАФИКА СИСТЕМЫ
+     ============================================ */
+  
+  .h1 { 
+    font-size: 28px; 
+    font-weight: 600; 
+    color: var(--text-primary);
+  }
+  
+  .h2 { 
+    font-size: 22px; 
+    font-weight: 600; 
+    color: var(--text-primary);
+  }
+  
+  .h3 { 
+    font-size: 18px; 
+    font-weight: 600; 
+    color: var(--text-primary);
+  }
+  
+  .text-base { 
+    font-size: 16px; 
+    color: var(--text-primary);
+  }
+  
+  .text-small { 
+    font-size: 14px; 
+    color: var(--text-secondary); 
+  }
+  
+  .font-medium { font-weight: 500; }
+  .font-bold { font-weight: 700; }
+
+  /* ============================================
+     БЛОКИ СИСТЕМЫ
+     ============================================ */
+  
+  .block {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border: 1px solid var(--bg-border);
+    border-radius: 12px;
+    transition: border-color 0.2s, box-shadow 0.2s;
+  }
+  
+  .block-info {
+    /* Информационный блок использует базовые стили */
+  }
+  
+  .block-button {
+    cursor: pointer;
+    justify-content: center;
+    align-items: center;
+    background: var(--bg-tertiary);
+    transition: background 0.2s, border-color 0.2s, transform 0.08s;
+  }
+  
+  .block-button:hover {
+    background: var(--bg-secondary);
+    border-color: var(--accent);
+  }
+  
+  .block-button:active {
+    transform: scale(0.96);
+  }
+  
+  .block-content {
+    padding: var(--block-padding);
+    height: 100%;
+    box-sizing: border-box;
+  }
+  
+  /* Режимы блоков */
+  .block-scroll .block-content {
+    overflow: auto;
+  }
+  
+  .block-auto {
+    height: auto;
+  }
+  
+  .block-auto .block-content {
+    height: auto;
+  }
+
+  /* ============================================
+     СЕТКА СИСТЕМЫ
+     ============================================ */
+  
+  .section-header-isolator {
+    width: 100%;
+    max-width: var(--max-width);
+    height: var(--header-height);
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    position: relative;
+  }
+  
+  .section-header-content {
+    width: 100%;
+  }
+  
+  .section-content-isolator {
+    width: 100%;
+    max-width: var(--max-width);
+    margin: 0 auto;
+    position: relative;
+  }
+  
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(var(--grid-columns), 1fr);
+    grid-auto-rows: var(--grid-row);
+    gap: var(--grid-gap);
+  }
+  
+  /* Span классы */
+  .span-1 { grid-column: span 1; }
+  .span-2 { grid-column: span 2; }
+  .span-3 { grid-column: span 3; }
+  .span-4 { grid-column: span 4; }
+  .span-5 { grid-column: span 5; }
+  .span-6 { grid-column: span 6; }
+  
+  .row-span-1 { grid-row: span 1; }
+  .row-span-2 { grid-row: span 2; }
+  .row-span-3 { grid-row: span 3; }
+  .row-span-4 { grid-row: span 4; }
+  .row-span-5 { grid-row: span 5; }
+  .row-span-6 { grid-row: span 6; }
+}
+
+/* ============================================
+   СКРОЛЛБАР
+   ============================================ */
+
+.ui-builder-shell, .ui-builder-shell * {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(109, 144, 214, 0.55) rgba(9, 13, 20, 0.25);
+}
+
+.ui-builder-shell ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.ui-builder-shell ::-webkit-scrollbar-track {
+  background: rgba(9, 13, 20, 0.25);
+  border-radius: 999px;
+}
+
+.ui-builder-shell ::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(93, 140, 227, 0.78), rgba(65, 105, 180, 0.78));
+  border: 2px solid rgba(9, 13, 20, 0.25);
+  border-radius: 999px;
+}
+
+.ui-builder-shell ::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(118, 160, 237, 0.92), rgba(77, 122, 208, 0.92));
+}
+
+/* ============================================
+   СЕЛЕКЦИЯ
+   ============================================ */
+
+::selection {
+  background: var(--accent);
+  color: white;
+}
+
+@layer components {
+  .panel-surface {
+    background: var(--surface-panel);
+    border-color: var(--line-default);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
+  }
+
+  .section-shell {
+    border: 1px solid transparent;
+    border-radius: 18px;
+  }
+
+  .section-header-isolator,
+  .section-content-isolator {
+    border: 1px solid transparent;
+    transition: border-color .18s ease, box-shadow .18s ease, background-color .18s ease;
+  }
+
+  .section-header-isolator:hover,
+  .section-content-isolator:hover {
+    border-color: var(--line-subtle);
+  }
+
+  .block {
+    box-shadow: 0 10px 24px rgba(0,0,0,.14);
+  }
+
+  .block-button .block-content {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    word-break: break-word;
+    overflow: hidden !important;
+  }
+
+  .block-info .block-content {
+    word-break: break-word;
+  }
+
+  .scroll-theme {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(109, 144, 214, 0.55) rgba(9, 13, 20, 0.25);
+  }
+
+  .scroll-theme::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .scroll-theme::-webkit-scrollbar-track {
+    background: rgba(9, 13, 20, 0.25);
+    border-radius: 999px;
+  }
+
+  .scroll-theme::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, rgba(93, 140, 227, 0.78), rgba(65, 105, 180, 0.78));
+    border: 2px solid rgba(9, 13, 20, 0.25);
+    border-radius: 999px;
+  }
+
+  .scroll-theme::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, rgba(118, 160, 237, 0.92), rgba(77, 122, 208, 0.92));
+  }
+}
+
+
+@media (max-width: 900px) {
+  :root {
+    --max-width: min(100vw - 24px, 900px);
+    --grid-gap: 8px;
+    --block-padding: 10px;
+  }
+
+  .h1 { font-size: 24px; }
+  .h2 { font-size: 20px; }
+  .h3 { font-size: 17px; }
+}
+
+@media (max-width: 640px) {
+  :root {
+    --grid-gap: 6px;
+    --grid-row: 20px;
+  }
+
+  .block { border-radius: 10px; }
+}
