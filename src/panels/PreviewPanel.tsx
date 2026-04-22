@@ -1,7 +1,7 @@
 /**
  * ============================================
  * MODULE: Preview Panel
- * VERSION: 1.3.0
+ * VERSION: 2.0.0
  * ROLE:
  * Изолированно рендерит runtime HTML проекта в iframe.
  *
@@ -9,6 +9,7 @@
  * - читать единый HTML source layer
  * - рендерить runtime HTML в iframe
  * - поддерживать desktop/tablet/mobile frame modes
+ * - использовать тот же self-contained HTML, что показывает CodePanel
  *
  * DEPENDS ON:
  * - useProjectStore()
@@ -22,6 +23,7 @@
  * - iframe должен рендерить тот же HTML, что показывает CodePanel
  * - preview-panel не должен добавлять отдельную "шапку" над runtime
  * - desktop preview должен занимать всю доступную область панели
+ * - смена viewMode должна пересоздавать iframe
  *
  * SECURITY:
  * - preview рендерится только в iframe
@@ -31,24 +33,41 @@
  */
 
 import { useMemo } from 'react';
+
 import { getProjectPreviewHtml } from '@/core/projectRuntimeHtml';
 import { useProjectStore } from '@/store/projectStore';
 
+/**
+ * ============================================
+ * BLOCK: Frame Widths
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Ширина preview-frame для каждого screen mode.
+ * ============================================
+ */
 const FRAME_WIDTHS = {
   desktop: '100%',
   tablet: '768px',
   mobile: '375px',
 } as const;
 
+/**
+ * ============================================
+ * MODULE: Preview Panel Root
+ * VERSION: 2.0.0
+ * ROLE:
+ * Корневой preview-panel для runtime iframe.
+ * ============================================
+ */
 export function PreviewPanel() {
   const { project, viewMode } = useProjectStore();
 
   /**
    * ============================================
    * BLOCK: Runtime HTML Source
-   * VERSION: 1.0.0
+   * VERSION: 2.0.0
    * PURPOSE:
-   * Получить тот же runtime HTML, что показывается в CodePanel.
+   * Получить self-contained runtime HTML проекта.
    * ============================================
    */
   const runtimeHtml = useMemo(() => getProjectPreviewHtml(project), [project]);
@@ -70,10 +89,13 @@ export function PreviewPanel() {
 
   return (
     <div className="flex-1 min-h-0 overflow-hidden bg-transparent">
-      <div className="flex h-full w-full justify-center overflow-auto">
+      <div className="flex h-full w-full justify-center overflow-auto bg-transparent">
         <div
           className="h-full transition-all duration-300"
-          style={{ width: frameWidth, maxWidth: '100%' }}
+          style={{
+            width: frameWidth,
+            maxWidth: '100%',
+          }}
         >
           <iframe
             key={iframeKey}

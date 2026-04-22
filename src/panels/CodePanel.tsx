@@ -1,7 +1,7 @@
 /**
  * ============================================
  * MODULE: Code Panel
- * VERSION: 1.2.0
+ * VERSION: 2.0.0
  * ROLE:
  * Показывает полный runtime HTML проекта в read-only виде.
  *
@@ -12,7 +12,7 @@
  *
  * DEPENDS ON:
  * - useProjectStore()
- * - getProjectPreviewHtml()
+ * - getProjectBaseHtml()
  *
  * USED BY:
  * - App.tsx
@@ -20,7 +20,7 @@
  * RULES:
  * - не содержит собственной логики сборки HTML
  * - не исполняет пользовательский код
- * - показывает тот же HTML, который получает PreviewPanel
+ * - показывает тот же self-contained HTML, что идёт в export pipeline
  * - не добавляет отдельную "шапку" над кодом
  *
  * SECURITY:
@@ -30,29 +30,39 @@
  */
 
 import { useMemo } from 'react';
-import { getProjectPreviewHtml } from '@/core/projectRuntimeHtml';
+
+import { getProjectBaseHtml } from '@/core/projectRuntimeHtml';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { useProjectStore } from '@/store/projectStore';
 
+/**
+ * ============================================
+ * MODULE: Code Panel Root
+ * VERSION: 2.0.0
+ * ROLE:
+ * Корневой read-only viewer итогового index.html.
+ * ============================================
+ */
 export function CodePanel() {
   const project = useProjectStore((state) => state.project);
 
   /**
    * ============================================
    * BLOCK: Generated Runtime HTML
-   * VERSION: 1.0.0
+   * VERSION: 2.0.0
    * PURPOSE:
-   * Получить тот же HTML, который идёт в iframe preview.
+   * Получить итоговый self-contained HTML проекта.
    * ============================================
    */
-  const runtimeHtml = useMemo(() => getProjectPreviewHtml(project), [project]);
+  const runtimeHtml = useMemo(() => getProjectBaseHtml(project), [project]);
 
-  return (
-    <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
-      <div className="min-h-0 flex-1 overflow-auto">
-        <pre className="min-h-full whitespace-pre-wrap break-words p-4 text-xs leading-5">
-          <code>{runtimeHtml}</code>
-        </pre>
-      </div>
-    </div>
-  );
+return (
+  <div className="flex h-full min-h-0 flex-col bg-[#111111]">
+    <ScrollArea className="min-h-0 flex-1 bg-[#111111]">
+      <pre className="min-h-full whitespace-pre-wrap break-words bg-[#111111] p-4 font-mono text-xs leading-5 text-[#FFFFFF]">
+        <code>{runtimeHtml}</code>
+      </pre>
+    </ScrollArea>
+  </div>
+);
 }

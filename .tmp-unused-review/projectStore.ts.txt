@@ -1,0 +1,51 @@
+      ...screen,
+      layout: screen.layout ? { ...screen.layout } : undefined,
+    };
+  });
+
+  return normalizeBlockResponsiveConfig(clonedResponsive);
+}
+
+export const cloneBlockForCanvas = (block: Block): Block =>
+  normalizeBlock({
+    ...block,
+    id: uuidv4(),
+    layout: block.layout ? { ...block.layout } : undefined,
+    runtime: block.runtime ? { ...block.runtime } : { ...DEFAULT_BLOCK_RUNTIME },
+    responsive: cloneBlockResponsive(block),
+    content: {
+      ...block.content,
+      children: block.content.children ? [...block.content.children] : undefined,
+    },
+    bindings: block.bindings ? [...block.bindings] : undefined,
+    customClasses: block.customClasses ? [...block.customClasses] : undefined,
+    customAttributes: block.customAttributes ? { ...block.customAttributes } : undefined,
+  });
+
+export const cloneSectionForCanvas = (section: Section, order: number): Section => ({
+  ...section,
+  id: uuidv4(),
+  name: `${section.name} копия`,
+  order,
+  header: {
+    ...section.header,
+    id: uuidv4(),
+    endpoint: section.header.endpoint
+      ? { ...section.header.endpoint }
+      : createDefaultHeaderEndpoint(section.header.title),
+  },
+  content: {
+    ...section.content,
+    id: uuidv4(),
+    blocks: section.content.blocks.map((block) => cloneBlockForCanvas(block)),
+    endpoint: section.content.endpoint
+      ? { ...section.content.endpoint }
+      : createDefaultContentEndpoint(),
+  },
+});
+
+// ============================================
+// HELPERS: PROJECT NORMALIZATION
+// ============================================
+
+function cloneProjectForHistory(project: Project): Project {

@@ -1,55 +1,17 @@
 /**
  * ============================================
- * MODULE: Properties Panel
- * VERSION: 1.3.0
- * ROLE:
- * Главный editing-layer для выбранного элемента builder canvas.
- *
- * RESPONSIBILITIES:
- * - показывать свойства выбранного элемента
- * - обновлять block / section / header / content
- * - управлять вспомогательными действиями (duplicate, delete, save custom)
- *
- * DEPENDS ON:
- * - useProjectStore()
- * - current page selection model
- * - shadcn input controls
- *
- * USED BY:
- * - App.tsx
- *
- * RULES:
- * - панель только редактирует builder state
- * - не содержит preview/runtime логики
- * - UI должен оставаться единообразным и расширяемым
- *
- * SECURITY:
- * - HTML/CSS в этой панели считаются trusted-only builder content
- * - панель не исполняет пользовательский код
+ * MODULE: PropertiesPanel
+ * VERSION: 5.0.0
+ * DESC: Панель свойств с жёсткой системой
+ *       стандартов отступов. Без иконок.
  * ============================================
  */
 
-import type { ReactNode } from 'react';
-import {
-  AlignVerticalJustifyStart,
-  Box,
-  Code,
-  Copy,
-  FileText,
-  Layout,
-  MousePointer,
-  PanelsTopLeft,
-  Rows3,
-  Settings,
-  Star,
-  Trash2,
-  Type,
-} from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
@@ -68,918 +30,1408 @@ import {
   type Block,
   type BlockMode,
   type BlockType,
+  type ColorSystem,
   type ContentIsolator,
   type HeaderIsolator,
   type Page,
+  type Project,
   type Section,
   type SelectedElement,
+  type ViewMode,
 } from '@/types/project';
 
-/**
- * ============================================
- * BLOCK: Shared Types
- * VERSION: 1.0.0
- * PURPOSE:
- * Типы панели и локальных помощников.
- * ============================================
- */
-type Direction = 'up' | 'down' | 'left' | 'right';
-
-type PanelShellProps = {
-  title: string;
-  children: ReactNode;
-  footer?: ReactNode;
-  headerHeight?: number;
-};
-
-type SelectedBlockContext = {
-  block: NonNullable<ReturnType<typeof resolveSelectedBlock>>['block'];
-  sectionId: string;
-  pageId: string;
-};
-
-type SelectedSectionContext = {
-  section: NonNullable<ReturnType<typeof resolveSelectedSection>>['section'];
-  pageId: string;
-};
-type CurrentPage = Page | undefined;
-type BlockUpdateInput = Partial<Block>;
-type SectionUpdateInput = Partial<Section>;
-type HeaderUpdateInput = Partial<HeaderIsolator>;
-type ContentUpdateInput = Partial<ContentIsolator>;
+// ============================================
+// SYSTEM STANDARDS
+// ============================================
 
 /**
- * ============================================
- * BLOCK: UI Constants
- * VERSION: 1.0.0
- * PURPOSE:
- * Централизация визуальных классов панели.
- * ============================================
+ * ┌─────────────────────────────────────────┐
+ * │  SPACING SYSTEM v3.1 — 12px BASE        │
+ * │                                         │
+ * │  Все зазоры кратны 12px (или 8px        │
+ * │  для микро-зазоров внутри блока)        │
+ * │                                         │
+ * │  Title → Subtitle:      8px             │
+ * │  Subtitle → Input:      8px             │
+ * │  Input → next Subtitle: 12px            │
+ * │  Input → Divider:      12px             │
+ * │  Divider → next Title: 12px             │
+ * │  Search → first field: 12px             │
+ * └─────────────────────────────────────────┘
  */
-const PANEL_CLASS =
+
+const STD = {
+  block: { gapBefore: 0, gapAfter: 0 },
+  title: { gapBefore: 0, gapAfter: 8 },
+  subtitle: { gapBefore: 0, gapAfter: 8 },
+  field: { gapBefore: 0, gapAfter: 12 },
+  divider: { gapBefore: 0, gapAfter: 12 },
+} as const;
+
+// ============================================
+// Types
+// ============================================
+
+type BlockLayout = { x: number; y: number; w: number; h: number };
+
+type ScreenOverride = {
+  html?: string;
+  visible?: boolean;
+  layout?: Partial<BlockLayout>;
+};
+
+type ExtBlock = Block & {
+  visible?: boolean;
+  layout?: BlockLayout;
+  runtime?: { css?: string; javascript?: string };
+  responsive?: Partial<Record<ViewMode, ScreenOverride>>;
+};
+
+type ExtProject = Project & {
+  theme?: { dark?: Partial<ColorSystem>; light?: Partial<ColorSystem> };
+  exportConfig: Project['exportConfig'] & { mode?: 'single-file' | 'split-files' };
+};
+
+type Store = {
+  project: Project;
+  selectedElement: SelectedElement | null;
+  viewMode: ViewMode;
+  updateBlock: (pid: string, sid: string, bid: string, u: Partial<ExtBlock> & { layout?: BlockLayout }) => void;
+  updateHeader: (pid: string, sid: string, u: Partial<HeaderIsolator>) => void;
+  updateSection: (pid: string, sid: string, u: Partial<Section>) => void;
+  updateContent: (pid: string, sid: string, u: Partial<ContentIsolator>) => void;
+  removeBlock: (pid: string, sid: string, bid: string) => void;
+  removeSection: (pid: string, sid: string) => void;
+  duplicateSection: (pid: string, sid: string) => void;
+  saveBlockToCustomLibrary: (pid: string, sid: string, bid: string) => void;
+  duplicateBlock: (pid: string, sid: string, bid: string) => void;
+  updateBlockScreen?: (pid: string, sid: string, bid: string, vm: ViewMode, u: ScreenOverride) => void;
+  resetBlockScreen?: (pid: string, sid: string, bid: string, vm: ViewMode) => void;
+  updateProjectMeta?: (u: Partial<Project['meta']>) => void;
+  updateProjectCustomLogic?: (u: Partial<Project['customLogic']>) => void;
+  updateProjectDesignSystem?: (u: Partial<Project['designSystem']>) => void;
+  updateProjectTheme?: (mode: 'dark' | 'light', u: Partial<ColorSystem>) => void;
+  updateProjectExportConfig?: (u: Partial<ExtProject['exportConfig']>) => void;
+  currentPageId?: string;
+};
+
+type SelBlockCtx = { block: ExtBlock; sectionId: string; pageId: string };
+type SelSectionCtx = { section: Section; pageId: string };
+
+// ============================================
+// Constants
+// ============================================
+
+const PANEL_CLS =
   'panel-surface w-80 min-h-0 overflow-hidden border-l border-[#313133] bg-[#1A1A1C] flex flex-col';
 
-const FOCUS_SELECTION_CLASS =
+const FOCUS_CLS =
   'outline-none focus-visible:ring-1 focus-visible:ring-[#2A80F4] focus-visible:border-[#2A80F4] selection:bg-[#2A80F4]/35 selection:text-white';
 
-const INPUT_CLASS = `bg-[#111111] border-[#313133] text-white ${FOCUS_SELECTION_CLASS}`;
-const READONLY_INPUT_CLASS = 'h-8 bg-[#111111] border-[#313133] text-[#666] text-xs';
-const TEXTAREA_SCROLL_CLASS = 'scroll-theme overflow-y-auto';
+const IN_CLS = `bg-[#111111] border-[#313133] text-white ${FOCUS_CLS}`;
+const RO_CLS = 'h-9 bg-[#111111] border-[#313133] text-[#666] text-xs';
+const TX_CLS = `bg-[#111111] border-[#313133] text-white resize-none ${FOCUS_CLS} scroll-theme overflow-y-auto`;
+const MO_CLS = `bg-[#111111] border-[#313133] text-white font-mono text-xs resize-none ${FOCUS_CLS} scroll-theme overflow-y-auto`;
+const BTN_CLS = 'bg-[#111111] border-[#313133] text-[#B0B0B0] hover:text-white text-xs rounded-md';
 
-const TEXTAREA_CLASS = `bg-[#111111] border-[#313133] text-white resize-none ${FOCUS_SELECTION_CLASS} ${TEXTAREA_SCROLL_CLASS}`;
-const MONO_TEXTAREA_CLASS = `bg-[#111111] border-[#313133] text-white font-mono text-xs resize-none ${FOCUS_SELECTION_CLASS} ${TEXTAREA_SCROLL_CLASS}`;
-const BUTTON_CLASS = 'bg-[#111111] border-[#313133] text-[#B0B0B0] hover:text-white';
+const SCR_LBLS: Record<ViewMode, string> = {
+  desktop: 'Десктоп',
+  tablet: 'Планшет',
+  mobile: 'Мобильный',
+};
 
-/**
- * ============================================
- * BLOCK: Shared Layout Components
- * VERSION: 1.0.0
- * PURPOSE:
- * Общие UI-обёртки панели свойств.
- * ============================================
- */
-function SectionDivider() {
-  return <div className="-mx-4 h-px bg-[#313133]" />;
+const CLR_LBLS: Record<keyof ColorSystem, string> = {
+  bgPrimary: 'Фон основной',
+  bgSecondary: 'Фон дополнительный',
+  bgTertiary: 'Фон третичный',
+  bgBorder: 'Граница',
+  textPrimary: 'Текст основной',
+  textSecondary: 'Текст дополнительный',
+  accent: 'Акцент',
+  success: 'Успех',
+  warning: 'Предупреждение',
+  error: 'Ошибка',
+};
+
+const DEF_LT: ColorSystem = {
+  bgPrimary: '#F5F7FB',
+  bgSecondary: '#FFFFFF',
+  bgTertiary: '#EEF3FB',
+  bgBorder: '#D8E1F0',
+  textPrimary: '#111827',
+  textSecondary: '#4B5563',
+  accent: '#2A80F4',
+  success: '#0E9F6E',
+  warning: '#D97706',
+  error: '#DC2626',
+};
+
+const TYPO_KEYS = ['h1', 'h2', 'h3', 'textBase', 'textSmall'] as const;
+
+// ============================================
+// Layout primitives
+// ============================================
+
+function clamp(n: number, min: number, max: number) {
+  return !Number.isFinite(n) ? min : Math.min(max, Math.max(min, Math.round(n)));
 }
 
-function PanelShell({
+function normLayout(i: Partial<BlockLayout>): BlockLayout {
+  const x = clamp(i.x ?? 1, 1, 6);
+  const y = clamp(i.y ?? 1, 1, 999);
+  const w = clamp(i.w ?? 2, 1, Math.max(1, 7 - x));
+  const h = clamp(i.h ?? 3, 1, MAX_BLOCK_ROW_SPAN);
+  return { x, y, w, h };
+}
+
+function curPage(p: Project, cid?: string) {
+  return cid ? p.pages.find((x) => x.id === cid) : p.pages[0];
+}
+
+function selBlockCtx(pg: Page | undefined, el: SelectedElement | null): SelBlockCtx | null {
+  if (!el || el.type !== 'block' || !pg) return null;
+  for (const s of pg.sections) {
+    const b = s.content.blocks.find((x) => x.id === el.id);
+    if (b) return { block: b as ExtBlock, sectionId: s.id, pageId: pg.id };
+  }
+  return null;
+}
+
+function selSectionCtx(pg: Page | undefined, el: SelectedElement | null): SelSectionCtx | null {
+  if (!el || !pg) return null;
+  const s = pg.sections.find(
+    (x) => x.id === el.id || x.header.id === el.id || x.content.id === el.id
+  );
+  return s ? { section: s, pageId: pg.id } : null;
+}
+
+function getRuntime(b: ExtBlock) {
+  return { css: b.runtime?.css ?? '', javascript: b.runtime?.javascript ?? '' };
+}
+
+function getBaseLayout(b: ExtBlock) {
+  return normLayout(b.layout ?? { w: 2, h: 3 });
+}
+
+function getBaseVisible(b: ExtBlock) {
+  return typeof b.visible === 'boolean' ? b.visible : true;
+}
+
+function getOverride(b: ExtBlock, vm: ViewMode) {
+  return b.responsive?.[vm] ?? {};
+}
+
+function getResolvedLayout(b: ExtBlock, vm: ViewMode) {
+  return normLayout({ ...getBaseLayout(b), ...(getOverride(b, vm).layout ?? {}) });
+}
+
+function getResolvedVisible(b: ExtBlock, vm: ViewMode) {
+  const ov = getOverride(b, vm).visible;
+  return typeof ov === 'boolean' ? ov : getBaseVisible(b);
+}
+
+// ============================================
+// UI Primitives (Standardized)
+// ============================================
+
+/** Title — block header. mb=8px to Subtitle */
+function Title({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ marginBottom: STD.title.gapAfter }}>
+      <h3 className="text-xs font-semibold text-[#B0B0B0] uppercase tracking-wider">
+        {children}
+      </h3>
+    </div>
+  );
+}
+
+/** Subtitle — field label. mb=8px to Input */
+function Subtitle({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ marginBottom: STD.subtitle.gapAfter }}>
+      <h4 className="text-[11px] font-medium text-[#999]">
+        {children}
+      </h4>
+    </div>
+  );
+}
+
+/** Field — wraps Subtitle + Input. mb=12px to next element */
+function Field({ children }: { children: ReactNode }) {
+  return (
+    <div style={{ marginBottom: STD.field.gapAfter }}>
+      {children}
+    </div>
+  );
+}
+
+/** Divider — horizontal line. to next element */
+function Divider() {
+  return (
+    <div
+      style={{
+        marginBottom: STD.divider.gapAfter,
+        marginLeft: -12,
+        marginRight: -12,
+      }}
+    >
+      <div className="h-px bg-[#313133]" />
+    </div>
+  );
+}
+
+/** Block — section with Title + children. Separated by Divider */
+function Block({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div style={{ marginTop: STD.block.gapBefore, marginBottom: STD.block.gapAfter }}>
+      <Title>{title}</Title>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * ┌─────────────────────────────────────────┐
+ * │  PRIMITIVE: Shell                       │
+ * │  Panel container with header            │
+ * └─────────────────────────────────────────┘
+ */
+function Shell({
   title,
   children,
   footer,
-  headerHeight = 48,
-}: PanelShellProps) {
+}: {
+  title: string;
+  children: ReactNode;
+  footer?: ReactNode;
+}) {
   return (
-    <div className={PANEL_CLASS}>
-      <div
-        className="shrink-0 flex items-center px-4 border-b border-[#313133]"
-        style={{ height: `${headerHeight}px` }}
-      >
-        <Settings className="w-4 h-4 text-[#2A80F4] mr-2" />
+    <div className={PANEL_CLS}>
+      <div className="shrink-0 flex items-center px-3 border-b border-[#313133] h-12">
         <span className="font-medium text-white text-sm">{title}</span>
       </div>
-
       <ScrollArea className="scroll-theme flex-1 min-h-0">
-        <div className="p-4 space-y-6">{children}</div>
+        <div className="p-3">{children}</div>
       </ScrollArea>
-
       {footer ? (
-        <div className="shrink-0 border-t border-[#313133] bg-[#1A1A1C] p-4">
-          {footer}
-        </div>
+        <div className="shrink-0 border-t border-[#313133] bg-[#1A1A1C] p-3">{footer}</div>
       ) : null}
     </div>
   );
 }
 
-function EmptyStatePanel() {
-  return (
-    <div className={PANEL_CLASS}>
-      <div className="h-12 shrink-0 flex items-center px-4 border-b border-[#313133]">
-        <Settings className="w-4 h-4 text-[#2A80F4] mr-2" />
-        <span className="font-medium text-white text-sm">Свойства</span>
-      </div>
+// ============================================
+// Search
+// ============================================
 
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="text-center">
-          <MousePointer className="w-12 h-12 text-[#313133] mx-auto mb-4" />
-          <p className="text-[#B0B0B0] text-sm">
-            Выберите элемент на холсте для редактирования свойств
-          </p>
-        </div>
-      </div>
+function useSearch() {
+  const [q, setQ] = useState('');
+  const filter = useCallback((label: string) => !q.trim() || label.toLowerCase().includes(q.toLowerCase()), [q]);
+  return { q, setQ, filter };
+}
+
+function Search({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="Поиск свойств..."
+        className={`h-9 ${IN_CLS}`}
+      />
     </div>
   );
 }
 
-/**
- * ============================================
- * BLOCK: Selection Resolution
- * VERSION: 1.1.0
- * PURPOSE:
- * Получение текущего контекста выбранного блока/секции.
- * ============================================
- */
-function resolveSelectedBlock(
-  currentPage: CurrentPage,
-  selectedElement: SelectedElement | null
-) {
-  if (!selectedElement || selectedElement.type !== 'block' || !currentPage) {
-    return null;
-  }
+// ============================================
+// Footer buttons
+// ============================================
 
-  for (const section of currentPage.sections) {
-    const block = section.content.blocks.find((item) => item.id === selectedElement.id);
-
-    if (block) {
-      return {
-        block,
-        sectionId: section.id,
-        pageId: currentPage.id,
-      };
-    }
-  }
-
-  return null;
-}
-
-function resolveSelectedSection(
-  currentPage: CurrentPage,
-  selectedElement: SelectedElement | null
-) {
-  if (!selectedElement || !currentPage) {
-    return null;
-  }
-
-  const section = currentPage.sections.find(
-    (item) =>
-      item.id === selectedElement.id ||
-      item.header.id === selectedElement.id ||
-      item.content.id === selectedElement.id
-  );
-
-  if (!section) {
-    return null;
-  }
-
-  return {
-    section,
-    pageId: currentPage.id,
-  };
-}
-
-/**
- * ============================================
- * BLOCK: Footer Components
- * VERSION: 1.0.0
- * PURPOSE:
- * Локальные footer-действия для block/section panels.
- * ============================================
- */
-function BlockFooter({
-  onSaveToCustom,
-  onDuplicate,
-  onRemove,
-}: {
-  onSaveToCustom: () => void;
-  onDuplicate: () => void;
-  onRemove: () => void;
-}) {
+function BlockFooter({ onSave, onDup, onDel }: { onSave: () => void; onDup: () => void; onDel: () => void }) {
   return (
-    <div className="space-y-2">
-      <Button
-        variant="outline"
-        size="sm"
-        className={`w-full ${BUTTON_CLASS}`}
-        onClick={onSaveToCustom}
-      >
-        <Star className="w-3 h-3 mr-1" />
-        Сохранить в избранное
+    <div className="space-y-3">
+      <Button variant="outline" size="sm" className={`w-full ${BTN_CLS}`} onClick={onSave}>
+        Сохранить в Custom
       </Button>
-
-      <div className="flex gap-2">
-        <Button
-          variant="outline"
-          size="sm"
-          className={`flex-1 ${BUTTON_CLASS}`}
-          onClick={onDuplicate}
-        >
-          <Copy className="w-3 h-3 mr-1" />
+      <div className="flex gap-3">
+        <Button variant="outline" size="sm" className={`flex-1 ${BTN_CLS}`} onClick={onDup}>
           Дублировать
         </Button>
-
         <Button
           variant="outline"
           size="sm"
-          className="bg-[#111111] border-[#FF4053]/30 text-[#FF4053] hover:bg-[#FF4053]/10"
-          onClick={onRemove}
+          className="bg-[#111111] border-[#FF4053]/30 text-[#FF4053] hover:bg-[#FF4053]/10 rounded-md"
+          onClick={onDel}
         >
-          <Trash2 className="w-3 h-3" />
+          Удалить
         </Button>
       </div>
     </div>
   );
 }
 
-function SectionFooter({
-  onDuplicate,
-  onRemove,
-}: {
-  onDuplicate: () => void;
-  onRemove: () => void;
-}) {
+function SectionFooter({ onDup, onDel }: { onDup: () => void; onDel: () => void }) {
   return (
-    <div className="flex gap-2">
-      <Button
-        variant="outline"
-        size="sm"
-        className={`flex-1 ${BUTTON_CLASS}`}
-        onClick={onDuplicate}
-      >
-        <Copy className="w-3 h-3 mr-1" />
+    <div className="flex gap-3">
+      <Button variant="outline" size="sm" className={`flex-1 ${BTN_CLS}`} onClick={onDup}>
         Дублировать секцию
       </Button>
-
       <Button
         variant="outline"
         size="sm"
         className="bg-[#111111] border-[#FF4053]/30 text-[#FF4053] hover:bg-[#FF4053]/10"
-        onClick={onRemove}
+        onClick={onDel}
       >
-        <Trash2 className="w-3 h-3" />
+        Удалить
       </Button>
     </div>
   );
 }
 
-/**
- * ============================================
- * BLOCK: Block Panel
- * VERSION: 1.1.0
- * PURPOSE:
- * Редактирование block-level свойств.
- * ============================================
- */
-function BlockPropertiesPanel({
-  selectedBlock,
-  onUpdateBlock,
-  onMoveBlock,
-  onSaveToCustom,
-  onDuplicateBlock,
-  onRemoveBlock,
-}: {
-  selectedBlock: SelectedBlockContext;
-  onUpdateBlock: (updates: BlockUpdateInput) => void;
-  onMoveBlock: (direction: Direction) => void;
-  onSaveToCustom: () => void;
-  onDuplicateBlock: () => void;
-  onRemoveBlock: () => void;
-}) {
-  const { block } = selectedBlock;
+// ============================================
+// Field: Number + px suffix
+// ============================================
 
-  const handleContentHtmlChange = (value: string) => {
-    onUpdateBlock({
-      content: {
-        ...block.content,
-        html: value,
-      },
-    });
-  };
+function NumField({
+  label,
+  value,
+  onChange,
+  min = 0,
+  max = 999,
+  step = 1,
+}: {
+  label: string;
+  value: number | string;
+  onChange: (v: string) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+}) {
+  return (
+    <Field>
+      <Subtitle>{label}</Subtitle>
+      <div className="relative">
+        <Input
+          type="number"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className={`h-9 pr-10 text-sm tabular-nums ${IN_CLS}`}
+        />
+        <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] text-[#555] select-none pointer-events-none">
+          px
+        </span>
+      </div>
+    </Field>
+  );
+}
+
+// ============================================
+// Field: Hex color + swatch
+// ============================================
+
+function ColorField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const isValid = /^#[0-9A-Fa-f]{6}$/.test(value);
+  return (
+    <Field>
+      <Subtitle>{label}</Subtitle>
+      <div className="flex items-center gap-3">
+        <div
+          className="w-7 h-7 rounded-md border border-[#313133] shrink-0 shadow-inner"
+          style={{ backgroundColor: isValid ? value : '#000' }}
+        />
+        <Input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className={`h-9 text-sm font-mono uppercase ${IN_CLS} ${isValid ? '' : 'border-[#FF4053]/50 text-[#FF4053]'}`}
+          maxLength={7}
+          spellCheck={false}
+        />
+      </div>
+    </Field>
+  );
+}
+
+// ============================================
+// Layout editor: X/Y/W/H grid
+// ============================================
+
+function LayoutEd({
+  label,
+  layout,
+  onChange,
+}: {
+  label: string;
+  layout: BlockLayout;
+  onChange: (u: Partial<BlockLayout>) => void;
+}) {
+  const fields: { key: 'x' | 'y' | 'w' | 'h'; label: string; subtitle: string; max: number }[] = [
+    { key: 'x', label: 'X', subtitle: 'col', max: 6 },
+    { key: 'y', label: 'Y', subtitle: 'row', max: 999 },
+    { key: 'w', label: 'W', subtitle: 'span', max: MAX_BLOCK_SPAN },
+    { key: 'h', label: 'H', subtitle: 'span', max: MAX_BLOCK_ROW_SPAN },
+  ];
 
   return (
-    <PanelShell
-      title="Свойства блока"
-      footer={
-        <BlockFooter
-          onSaveToCustom={onSaveToCustom}
-          onDuplicate={onDuplicateBlock}
-          onRemove={onRemoveBlock}
-        />
+    <Field>
+      <Subtitle>{label}</Subtitle>
+      <div className="grid grid-cols-4 gap-3">
+        {fields.map((f) => (
+          <div key={f.key} className="space-y-3 min-w-0">
+            <div className="flex items-center justify-between px-1">
+              <span className="text-[10px] font-semibold text-[#777]">{f.label}</span>
+              <span className="text-[9px] text-[#3A3A3C]">{f.subtitle}</span>
+            </div>
+            <Input
+              type="number"
+              min={1}
+              max={f.max}
+              value={layout[f.key]}
+              onChange={(e) =>
+                onChange({ [f.key]: Number(e.target.value) } as Partial<BlockLayout>)
+              }
+              className={`h-8 text-xs text-center tabular-nums px-1 ${IN_CLS}`}
+            />
+          </div>
+        ))}
+      </div>
+    </Field>
+  );
+}
+
+function BaseLayoutPad({
+  layout,
+  onChange,
+}: {
+  layout: BlockLayout;
+  onChange: (u: Partial<BlockLayout>) => void;
+}) {
+  const move = useCallback(
+    (dx: number, dy: number) => {
+      const next = normLayout({
+        ...layout,
+        x: layout.x + dx,
+        y: layout.y + dy,
+      });
+      onChange({ x: next.x, y: next.y });
+    },
+    [layout, onChange]
+  );
+
+  const resize = useCallback(
+    (dw: number, dh: number) => {
+      const next = normLayout({
+        ...layout,
+        w: layout.w + dw,
+        h: layout.h + dh,
+      });
+      onChange({ w: next.w, h: next.h });
+    },
+    [layout, onChange]
+  );
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isTypingTarget =
+        !!target &&
+        (
+          target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable
+        );
+
+      if (isTypingTarget) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+
+      const key = event.key.toLowerCase();
+
+      switch (key) {
+        case 'arrowup':
+          event.preventDefault();
+          move(0, -1);
+          break;
+        case 'arrowdown':
+          event.preventDefault();
+          move(0, 1);
+          break;
+        case 'arrowleft':
+          event.preventDefault();
+          move(-1, 0);
+          break;
+        case 'arrowright':
+          event.preventDefault();
+          move(1, 0);
+          break;
+        case 'w':
+        case 'ц':
+          event.preventDefault();
+          resize(0, -1);
+          break;
+        case 's':
+        case 'ы':
+          event.preventDefault();
+          resize(0, 1);
+          break;
+        case 'a':
+        case 'ф':
+          event.preventDefault();
+          resize(-1, 0);
+          break;
+        case 'd':
+        case 'в':
+          event.preventDefault();
+          resize(1, 0);
+          break;
+        default:
+          break;
       }
-    >
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs">ID блока</Label>
-        <Input value={block.id} readOnly className={READONLY_INPUT_CLASS} />
-      </div>
+    };
 
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs flex items-center gap-2">
-          <FileText className="w-3 h-3" />
-          Название блока
-        </Label>
-        <Input
-          value={block.name}
-          onChange={(event) => onUpdateBlock({ name: event.target.value })}
-          className={`h-9 ${INPUT_CLASS}`}
-        />
-      </div>
+    window.addEventListener('keydown', handleKeyDown);
 
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs">Описание</Label>
-        <Textarea
-          value={block.description}
-          onChange={(event) => onUpdateBlock({ description: event.target.value })}
-          className={`min-h-20 ${TEXTAREA_CLASS}`}
-        />
-      </div>
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [move, resize]);
 
-      <SectionDivider />
-
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs flex items-center gap-2">
-          <Type className="w-3 h-3" />
-          Тип блока
-        </Label>
-
-        <Select
-          value={block.type}
-          onValueChange={(value) => onUpdateBlock({ type: value as BlockType })}
-        >
-          <SelectTrigger className={`h-9 ${INPUT_CLASS}`}>
-            <SelectValue />
-          </SelectTrigger>
-
-          <SelectContent className="bg-[#1A1A1C] border-[#313133]">
-                      <SelectContent className="bg-[#1A1A1C] border-[#313133]">
-            <SelectItem value="block-info" className="text-white">
-              Обычный блок
-            </SelectItem>
-            <SelectItem value="block-button" className="text-white">
-              Кнопка
-            </SelectItem>
-            <SelectItem value="block-placeholder" className="text-white">
-              Заглушка
-            </SelectItem>
-          </SelectContent>
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs flex items-center gap-2">
-          <AlignVerticalJustifyStart className="w-3 h-3" />
-          Поведение контента
-        </Label>
-
-        <Select
-          value={block.mode}
-          onValueChange={(value) => onUpdateBlock({ mode: value as BlockMode })}
-        >
-          <SelectTrigger className={`h-9 ${INPUT_CLASS}`}>
-            <SelectValue />
-          </SelectTrigger>
-
-          <SelectContent className="bg-[#1A1A1C] border-[#313133]">
-            <SelectItem value="clip" className="text-white">
-              Обрезать
-            </SelectItem>
-            {block.type !== 'block-button' && (
-              <SelectItem value="scroll" className="text-white">
-                Внутренний скролл
-              </SelectItem>
-            )}
-          </SelectContent>
-        </Select>
-      </div>
-
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs flex items-center gap-2">
-          <Layout className="w-3 h-3" />
-          Размер блока
-        </Label>
-
-        <div className="grid grid-cols-4 gap-1">
+  return (
+    <div className="space-y-3">
+      <div>
+        <Subtitle>Расположение</Subtitle>
+        <div className="grid grid-cols-4 gap-3">
           <Button
+            type="button"
             variant="outline"
-            size="sm"
-            className={`h-8 ${BUTTON_CLASS}`}
-            onClick={() => onMoveBlock('left')}
-            disabled={block.span <= 1}
-          >
-            ←
-          </Button>
-
-          <Button
-            variant="outline"
-            size="sm"
-            className={`h-8 ${BUTTON_CLASS}`}
-            onClick={() => onMoveBlock('right')}
-            disabled={block.span >= MAX_BLOCK_SPAN}
-          >
-            →
-          </Button>
-
-          <Button
-            variant="outline"
-            size="sm"
-            className={`h-8 ${BUTTON_CLASS}`}
-            onClick={() => onMoveBlock('up')}
-            disabled={block.rowSpan <= 1}
+            className={`h-9 flex items-center justify-center ${BTN_CLS}`}
+            onClick={() => move(0, -1)}
           >
             ↑
           </Button>
-
           <Button
+            type="button"
             variant="outline"
-            size="sm"
-            className={`h-8 ${BUTTON_CLASS}`}
-            onClick={() => onMoveBlock('down')}
-            disabled={block.rowSpan >= MAX_BLOCK_ROW_SPAN}
+            className={`h-9 flex items-center justify-center ${BTN_CLS}`}
+            onClick={() => move(0, 1)}
           >
             ↓
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className={`h-9 flex items-center justify-center ${BTN_CLS}`}
+            onClick={() => move(-1, 0)}
+          >
+            ←
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className={`h-9 flex items-center justify-center ${BTN_CLS}`}
+            onClick={() => move(1, 0)}
+          >
+            →
           </Button>
         </div>
       </div>
 
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs flex items-center gap-2">
-          <Code className="w-3 h-3" />
-          HTML содержимое
-        </Label>
-
-        <Textarea
-          value={block.content.html}
-          onChange={(event) => handleContentHtmlChange(event.target.value)}
-          className={`min-h-32 ${MONO_TEXTAREA_CLASS}`}
-        />
+      <div style={{ marginTop: 16 }}>
+        <Subtitle>Размер</Subtitle>
+        <div className="grid grid-cols-4 gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            className={`h-9 flex items-center justify-center ${BTN_CLS}`}
+            onClick={() => resize(1, 0)}
+          >
+            →
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className={`h-9 flex items-center justify-center ${BTN_CLS}`}
+            onClick={() => resize(-1, 0)}
+          >
+            ←
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className={`h-9 flex items-center justify-center ${BTN_CLS}`}
+            onClick={() => resize(0, 1)}
+          >
+            ↓
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className={`h-9 flex items-center justify-center ${BTN_CLS}`}
+            onClick={() => resize(0, -1)}
+          >
+            ↑
+          </Button>
+        </div>
       </div>
-    </PanelShell>
+    </div>
   );
 }
 
-/**
- * ============================================
- * BLOCK: Section Panel
- * VERSION: 1.0.0
- * PURPOSE:
- * Редактирование section-level свойств.
- * ============================================
- */
-function SectionPropertiesPanel({
-  selectedSection,
-  onUpdateSection,
-  onDuplicateSection,
-  onRemoveSection,
+// ============================================
+// Screen override card
+// ============================================
+
+function ScreenCard({
+  block,
+  screen,
+  currentViewMode,
+  onUpdate,
+  onReset,
 }: {
-  selectedSection: SelectedSectionContext;
-  onUpdateSection: (updates: SectionUpdateInput) => void;
-  onDuplicateSection: () => void;
-  onRemoveSection: () => void;
+  block: ExtBlock;
+  screen: ViewMode;
+  currentViewMode: ViewMode;
+  onUpdate: (vm: ViewMode, u: ScreenOverride) => void;
+  onReset: (vm: ViewMode) => void;
 }) {
-  const { section } = selectedSection;
+  const ov = useMemo(() => getOverride(block, screen), [block, screen]);
+  const layout = useMemo(() => getResolvedLayout(block, screen), [block, screen]);
+  const visible = useMemo(() => getResolvedVisible(block, screen), [block, screen]);
+  const isActive = currentViewMode === screen;
+  const hasOv = typeof ov.html === 'string' || typeof ov.visible === 'boolean' || !!Object.keys(ov.layout ?? {}).length;
+
+  const handleLayout = useCallback(
+    (u: Partial<BlockLayout>) => onUpdate(screen, { layout: { ...(ov.layout ?? {}), ...u } }),
+    [onUpdate, screen, ov.layout]
+  );
 
   return (
-    <PanelShell
-      title="Свойства секции"
-      footer={
-        <SectionFooter
-          onDuplicate={onDuplicateSection}
-          onRemove={onRemoveSection}
-        />
-      }
+    <div className="space-y-3 rounded-md border border-[#313133] bg-[#111111] p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-medium text-white">{SCR_LBLS[screen]}</div>
+            {isActive && (
+              <span className="rounded-md bg-[#2A80F4]/15 px-2 py-1 text-[10px] font-medium text-[#8FB4FF]">
+                Активен
+              </span>
+            )}
+          </div>
+          {hasOv && (
+            <div className="text-[11px] text-[#7F8792]">
+              Есть переопределение
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <Button variant="outline" size="sm" className={`h-8 ${BTN_CLS}`} onClick={() => onReset(screen)}>
+            Сбросить
+          </Button>
+        </div>
+      </div>
+
+      <div style={{ marginTop: 7 }}>
+        <Field>
+          <Subtitle>Видимость</Subtitle>
+          <Select value={visible ? 'visible' : 'hidden'} onValueChange={(v) => onUpdate(screen, { visible: v === 'visible' })}>
+            <SelectTrigger className={`h-9 ${IN_CLS}`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-[#1A1A1C] border-[#313133]">
+              <SelectItem value="visible" className="text-white">Видим</SelectItem>
+              <SelectItem value="hidden" className="text-white">Скрыт</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+      </div>
+
+      <LayoutEd label="Предопределенное расположение" layout={layout} onChange={handleLayout} />
+
+      <div style={{ marginTop: 44 }}>
+        <Field>
+          <Subtitle>Предопределенный HTML</Subtitle>
+          <Textarea
+            value={ov.html ?? ''}
+            onChange={(e) => onUpdate(screen, { html: e.target.value })}
+            className={`min-h-28 ${MO_CLS}`}
+          />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// Panel: Project
+// ============================================
+
+function ProjectPanel({
+  project,
+  onMeta,
+  onLogic,
+  onDesign,
+  onTheme,
+  onExport,
+}: {
+  project: ExtProject;
+  onMeta: (u: Partial<Project['meta']>) => void;
+  onLogic: (u: Partial<Project['customLogic']>) => void;
+  onDesign: (u: Partial<Project['designSystem']>) => void;
+  onTheme: (m: 'dark' | 'light', u: Partial<ColorSystem>) => void;
+  onExport: (u: Partial<ExtProject['exportConfig']>) => void;
+}) {
+  const { q, setQ, filter } = useSearch();
+
+  const dark = useMemo(
+    () => ({ ...project.designSystem.colors, ...(project.theme?.dark ?? {}) }),
+    [project.designSystem.colors, project.theme?.dark]
+  );
+  const light = useMemo(
+    () => ({ ...DEF_LT, ...(project.theme?.light ?? {}) }),
+    [project.theme?.light]
+  );
+  const mode = project.exportConfig.mode ?? 'single-file';
+
+  return (
+    <Shell title="Свойства проекта">
+      <Search value={q} onChange={setQ} />
+
+      {filter('ID проекта') && (
+        <Field>
+          <Subtitle>ID проекта</Subtitle>
+          <Input value={project.meta.id} readOnly className={RO_CLS} />
+        </Field>
+      )}
+
+      {filter('Название') && (
+        <Field>
+          <Subtitle>Название проекта</Subtitle>
+          <Input value={project.meta.name} onChange={(e) => onMeta({ name: e.target.value })} className={`h-9 ${IN_CLS}`} />
+        </Field>
+      )}
+
+      {filter('Описание') && (
+        <Field>
+          <Subtitle>Описание проекта</Subtitle>
+          <Textarea
+            value={project.meta.description}
+            onChange={(e) => onMeta({ description: e.target.value })}
+            className={`min-h-24 ${TX_CLS}`}
+          />
+        </Field>
+      )}
+
+      <Divider />
+
+      <Block title="Экспорт">
+        <Field>
+          <Subtitle>Режим экспорта</Subtitle>
+          <Select value={mode} onValueChange={(v) => onExport({ mode: v as 'single-file' | 'split-files' })}>
+            <SelectTrigger className={`h-9 ${IN_CLS}`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent className="bg-[#1A1A1C] border-[#313133]">
+              <SelectItem value="single-file" className="text-white">Один файл</SelectItem>
+              <SelectItem value="split-files" className="text-white">Разделённые файлы</SelectItem>
+            </SelectContent>
+          </Select>
+        </Field>
+      </Block>
+
+      <Divider />
+
+      <Block title="Типографика">
+        <div className="space-y-3">
+          {TYPO_KEYS.map((key) => (
+            <NumField
+              key={key}
+              label={key}
+              value={parseInt(project.designSystem.typography[key].fontSize, 10) || 0}
+              onChange={(v) =>
+                onDesign({
+                  typography: {
+                    ...project.designSystem.typography,
+                    [key]: { ...project.designSystem.typography[key], fontSize: `${v}px` },
+                  },
+                })
+              }
+              min={8}
+              max={120}
+            />
+          ))}
+        </div>
+      </Block>
+
+      <Divider />
+
+      <Block title="Тёмная тема">
+        <div className="space-y-3">
+          {Object.entries(CLR_LBLS).map(([key, label]) => (
+            <ColorField
+              key={`d-${key}`}
+              label={label}
+              value={dark[key as keyof ColorSystem] ?? '#000000'}
+              onChange={(v) => onTheme('dark', { [key]: v } as Partial<ColorSystem>)}
+            />
+          ))}
+        </div>
+      </Block>
+
+      <Block title="Светлая тема">
+        <div className="space-y-3">
+          {Object.entries(CLR_LBLS).map(([key, label]) => (
+            <ColorField
+              key={`l-${key}`}
+              label={label}
+              value={light[key as keyof ColorSystem] ?? '#000000'}
+              onChange={(v) => onTheme('light', { [key]: v } as Partial<ColorSystem>)}
+            />
+          ))}
+        </div>
+      </Block>
+
+      <Divider />
+
+      <Block title="Глобальный CSS">
+        <Field>
+          <Textarea value={project.customLogic.css} onChange={(e) => onLogic({ css: e.target.value })} className={`min-h-40 ${MO_CLS}`} />
+        </Field>
+      </Block>
+
+      <Block title="Глобальный JS">
+        <Field>
+          <Textarea value={project.customLogic.javascript} onChange={(e) => onLogic({ javascript: e.target.value })} className={`min-h-40 ${MO_CLS}`} />
+        </Field>
+      </Block>
+    </Shell>
+  );
+}
+
+// ============================================
+// Panel: Block
+// ============================================
+
+function BlockPanel({
+  ctx,
+  viewMode,
+  onUpdate,
+  onUpdateScreen,
+  onResetScreen,
+  onSave,
+  onDup,
+  onDel,
+}: {
+  ctx: SelBlockCtx;
+  viewMode: ViewMode;
+  onUpdate: (u: Partial<ExtBlock> & { layout?: BlockLayout }) => void;
+  onUpdateScreen: (vm: ViewMode, u: ScreenOverride) => void;
+  onResetScreen: (vm: ViewMode) => void;
+  onSave: () => void;
+  onDup: () => void;
+  onDel: () => void;
+}) {
+  const { block } = ctx;
+  const rt = getRuntime(block);
+  const baseLayout = getBaseLayout(block);
+  const { q, setQ, filter } = useSearch();
+
+  const setHtml = useCallback(
+    (v: string) => onUpdate({ content: { ...block.content, html: v } }),
+    [onUpdate, block.content]
+  );
+  const setLayout = useCallback(
+    (u: Partial<BlockLayout>) => onUpdate({ layout: normLayout({ ...baseLayout, ...u }) }),
+    [onUpdate, baseLayout]
+  );
+  const setJs = useCallback(
+    (v: string) => onUpdate({ runtime: { ...rt, javascript: v } }),
+    [onUpdate, rt]
+  );
+
+  return (
+    <Shell
+      title="Свойства блока"
+      footer={<BlockFooter onSave={onSave} onDup={onDup} onDel={onDel} />}
     >
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs">ID секции</Label>
-        <Input value={section.id} readOnly className={READONLY_INPUT_CLASS} />
-      </div>
+      <Search value={q} onChange={setQ} />
 
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs flex items-center gap-2">
-          <PanelsTopLeft className="w-3 h-3" />
-          Название секции
-        </Label>
-        <Input
-          value={section.name}
-          onChange={(event) => onUpdateSection({ name: event.target.value })}
-          className={`h-9 ${INPUT_CLASS}`}
-        />
-      </div>
+      {filter('ID блока') && (
+        <Field>
+          <Subtitle>ID блока</Subtitle>
+          <Input value={block.id} readOnly className={RO_CLS} />
+        </Field>
+      )}
 
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs">Описание секции</Label>
-        <Textarea
-          value={section.description}
-          onChange={(event) => onUpdateSection({ description: event.target.value })}
-          className={`min-h-24 ${TEXTAREA_CLASS}`}
-        />
-      </div>
+      {filter('Название') && (
+        <Field>
+          <Subtitle>Название блока</Subtitle>
+          <Input value={block.name} onChange={(e) => onUpdate({ name: e.target.value })} className={`h-9 ${IN_CLS}`} />
+        </Field>
+      )}
 
-      <SectionDivider />
+      {filter('Описание') && (
+        <Field>
+          <Subtitle>Описание</Subtitle>
+          <Textarea value={block.description} onChange={(e) => onUpdate({ description: e.target.value })} className={`min-h-20 ${TX_CLS}`} />
+        </Field>
+      )}
 
-      <div className="space-y-2 text-xs text-[#B0B0B0]">
-        <div className="flex justify-between">
-          <span>Header title</span>
-          <span className="text-white">{section.header.title || '—'}</span>
+      <Divider />
+
+      <Block title="Тип и поведение">
+        {filter('Тип блока') && (
+          <Field>
+            <Subtitle>Тип блока</Subtitle>
+            <Select value={block.type} onValueChange={(v) => onUpdate({ type: v as BlockType })}>
+              <SelectTrigger className={`h-9 ${IN_CLS}`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-[#1A1A1C] border-[#313133]">
+                <SelectItem value="block-info" className="text-white">Обычный блок</SelectItem>
+                <SelectItem value="block-button" className="text-white">Кнопка</SelectItem>
+                <SelectItem value="block-placeholder" className="text-white">Заглушка</SelectItem>
+              </SelectContent>
+            </Select>
+          </Field>
+        )}
+
+        {filter('Поведение') && (
+          <Field>
+            <Subtitle>Поведение контента</Subtitle>
+            <Select
+              value={block.mode === 'scroll' ? 'scroll' : 'clip'}
+              onValueChange={(v) => onUpdate({ mode: v as BlockMode })}
+            >
+              <SelectTrigger className={`h-9 ${IN_CLS}`}>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent className="bg-[#1A1A1C] border-[#313133]">
+                <SelectItem value="clip" className="text-white">Обрезать</SelectItem>
+                {block.type !== 'block-button' && (
+                  <SelectItem value="scroll" className="text-white">Внутренний скролл</SelectItem>
+                )}
+              </SelectContent>
+            </Select>
+          </Field>
+        )}
+      </Block>
+
+      <Divider />
+
+      <Block title="Базовое состояние">
+        {filter('Расположение') && (
+          <BaseLayoutPad layout={baseLayout} onChange={setLayout} />
+        )}
+
+        <div style={{ marginTop: 21 }}>
+          <Field>
+            <Subtitle>Базовый HTML</Subtitle>
+            <Textarea value={block.content.html} onChange={(e) => setHtml(e.target.value)} className={`min-h-36 ${MO_CLS}`} />
+          </Field>
         </div>
 
-        <div className="flex justify-between">
+        <Field>
+          <Subtitle>JavaScript</Subtitle>
+          <Textarea value={rt.javascript} onChange={(e) => setJs(e.target.value)} className={`min-h-28 ${MO_CLS}`} />
+        </Field>
+      </Block>
+
+      <Divider />
+
+      <Block title="Переопределения экранов">
+        <div className="space-y-3">
+          {(['desktop', 'tablet', 'mobile'] as ViewMode[]).map((s) => (
+            <ScreenCard
+              key={s}
+              block={block}
+              screen={s}
+              currentViewMode={viewMode}
+              onUpdate={onUpdateScreen}
+              onReset={onResetScreen}
+            />
+          ))}
+        </div>
+      </Block>
+
+    </Shell>
+  );
+}
+
+// ============================================
+// Panel: Section
+// ============================================
+
+function SectionPanel({
+  ctx,
+  onUpdate,
+  onDup,
+  onDel,
+}: {
+  ctx: SelSectionCtx;
+  onUpdate: (u: Partial<Section>) => void;
+  onDup: () => void;
+  onDel: () => void;
+}) {
+  const { section } = ctx;
+  return (
+    <Shell
+      title="Свойства секции"
+      footer={<SectionFooter onDup={onDup} onDel={onDel} />}
+    >
+      <Field>
+        <Subtitle>ID секции</Subtitle>
+        <Input value={section.id} readOnly className={RO_CLS} />
+      </Field>
+
+      <Field>
+        <Subtitle>Название секции</Subtitle>
+        <Input value={section.name} onChange={(e) => onUpdate({ name: e.target.value })} className={`h-9 ${IN_CLS}`} />
+      </Field>
+
+      <Field>
+        <Subtitle>Описание секции</Subtitle>
+        <Textarea value={section.description} onChange={(e) => onUpdate({ description: e.target.value })} className={`min-h-24 ${TX_CLS}`} />
+      </Field>
+
+      <Divider />
+
+      <Field>
+        <div className="space-y-3">
+          <div className="flex justify-between text-xs text-[#B0B0B0]">
+            <span>Заголовок хедера</span>
+            <span className="text-white">{section.header.title || '—'}</span>
+          </div>
+          <div className="flex justify-between text-xs text-[#B0B0B0]">
+            <span>Блоков внутри</span>
+            <span className="text-white">{section.content.blocks.length}</span>
+          </div>
+          <div className="flex justify-between text-xs text-[#B0B0B0]">
+            <span>Порядок</span>
+            <span className="text-white">{section.order + 1}</span>
+          </div>
+        </div>
+      </Field>
+    </Shell>
+  );
+}
+
+// ============================================
+// Panel: Header
+// ============================================
+
+function HeaderPanel({
+  ctx,
+  onUpdate,
+}: {
+  ctx: SelSectionCtx;
+  onUpdate: (u: Partial<HeaderIsolator>) => void;
+}) {
+  const { section } = ctx;
+  const ep = useMemo(() => section.header.endpoint || createDefaultHeaderEndpoint(section.header.title), [section.header]);
+
+  const setTitle = useCallback(
+    (v: string) =>
+      onUpdate({
+        title: v,
+        endpoint: { ...ep, html: ep.html?.trim() ? ep.html : `<div class="h1">${v}</div>` },
+      }),
+    [onUpdate, ep]
+  );
+
+  return (
+    <Shell title="Свойства хедера">
+      <Field>
+        <Subtitle>ID хедера</Subtitle>
+        <Input value={section.header.id} readOnly className={RO_CLS} />
+      </Field>
+
+      <Field>
+        <Subtitle>Название</Subtitle>
+        <Input value={section.header.name} onChange={(e) => onUpdate({ name: e.target.value })} className={`h-9 ${IN_CLS}`} />
+      </Field>
+
+      <Field>
+        <Subtitle>Описание</Subtitle>
+        <Textarea value={section.header.description} onChange={(e) => onUpdate({ description: e.target.value })} className={`min-h-20 ${TX_CLS}`} />
+      </Field>
+
+      <Field>
+        <Subtitle>Заголовок</Subtitle>
+        <Input value={section.header.title} onChange={(e) => setTitle(e.target.value)} className={`h-9 ${IN_CLS}`} />
+      </Field>
+
+      <Divider />
+
+      <Field>
+        <Subtitle>HTML хедера</Subtitle>
+        <Textarea
+          value={ep.html ?? ''}
+          onChange={(e) => onUpdate({ endpoint: { ...ep, html: e.target.value } })}
+          className={`min-h-32 ${MO_CLS}`}
+        />
+      </Field>
+
+      <Field>
+        <Subtitle>CSS хедера</Subtitle>
+        <Textarea
+          value={ep.css ?? ''}
+          onChange={(e) => onUpdate({ endpoint: { ...ep, css: e.target.value } })}
+          className={`min-h-24 ${MO_CLS}`}
+        />
+      </Field>
+    </Shell>
+  );
+}
+
+// ============================================
+// Panel: Content
+// ============================================
+
+function ContentPanel({
+  ctx,
+  onUpdate,
+}: {
+  ctx: SelSectionCtx;
+  onUpdate: (u: Partial<ContentIsolator>) => void;
+}) {
+  const { section } = ctx;
+  const ep = useMemo(() => section.content.endpoint || createDefaultContentEndpoint(), [section.content]);
+
+  return (
+    <Shell title="Свойства контента">
+      <Field>
+        <Subtitle>ID контента</Subtitle>
+        <Input value={section.content.id} readOnly className={RO_CLS} />
+      </Field>
+
+      <Field>
+        <Subtitle>Название</Subtitle>
+        <Input value={section.content.name} onChange={(e) => onUpdate({ name: e.target.value })} className={`h-9 ${IN_CLS}`} />
+      </Field>
+
+      <Field>
+        <Subtitle>Описание</Subtitle>
+        <Textarea value={section.content.description} onChange={(e) => onUpdate({ description: e.target.value })} className={`min-h-20 ${TX_CLS}`} />
+      </Field>
+
+      <Field>
+        <div className="flex justify-between text-xs text-[#B0B0B0]">
           <span>Блоков внутри</span>
           <span className="text-white">{section.content.blocks.length}</span>
         </div>
+      </Field>
 
-        <div className="flex justify-between">
-          <span>Порядок</span>
-          <span className="text-white">{section.order + 1}</span>
-        </div>
-      </div>
-    </PanelShell>
+      <Divider />
+
+      <Field>
+        <Subtitle>HTML контента</Subtitle>
+        <Textarea
+          value={ep.html ?? ''}
+          onChange={(e) => onUpdate({ endpoint: { ...ep, html: e.target.value } })}
+          className={`min-h-32 ${MO_CLS}`}
+        />
+      </Field>
+
+      <Field>
+        <Subtitle>CSS контента</Subtitle>
+        <Textarea
+          value={ep.css ?? ''}
+          onChange={(e) => onUpdate({ endpoint: { ...ep, css: e.target.value } })}
+          className={`min-h-24 ${MO_CLS}`}
+        />
+      </Field>
+    </Shell>
   );
 }
 
-/**
- * ============================================
- * BLOCK: Header Panel
- * VERSION: 1.0.0
- * PURPOSE:
- * Редактирование header-isolator свойств.
- * ============================================
- */
-function HeaderPropertiesPanel({
-  selectedSection,
-  onUpdateHeader,
-}: {
-  selectedSection: SelectedSectionContext;
-  onUpdateHeader: (updates: HeaderUpdateInput) => void;
-}) {
-  const { section } = selectedSection;
-  const endpoint =
-    section.header.endpoint || createDefaultHeaderEndpoint(section.header.title);
+// ============================================
+// Fallback
+// ============================================
 
-  const handleHeaderTitleChange = (value: string) => {
-    onUpdateHeader({
-      title: value,
-      endpoint: {
-        ...endpoint,
-        html: endpoint.html?.trim() ? endpoint.html : `<div class="h1">${value}</div>`,
-      },
-    });
-  };
-
+function Fallback({ type }: { type?: string }) {
   return (
-    <PanelShell title="Свойства header">
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs">ID header</Label>
-        <Input value={section.header.id} readOnly className={READONLY_INPUT_CLASS} />
-      </div>
-
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs flex items-center gap-2">
-          <Box className="w-3 h-3" />
-          Название
-        </Label>
-        <Input
-          value={section.header.name}
-          onChange={(event) => onUpdateHeader({ name: event.target.value })}
-          className={`h-9 ${INPUT_CLASS}`}
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs">Описание</Label>
-        <Textarea
-          value={section.header.description}
-          onChange={(event) => onUpdateHeader({ description: event.target.value })}
-          className={`min-h-20 ${TEXTAREA_CLASS}`}
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs">Заголовок</Label>
-        <Input
-          value={section.header.title}
-          onChange={(event) => handleHeaderTitleChange(event.target.value)}
-          className={`h-9 ${INPUT_CLASS}`}
-        />
-      </div>
-
-      <SectionDivider />
-
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs">HTML header</Label>
-        <Textarea
-          value={endpoint.html || ''}
-          onChange={(event) =>
-            onUpdateHeader({
-              endpoint: { ...endpoint, html: event.target.value },
-            })
-          }
-          className={`min-h-32 ${MONO_TEXTAREA_CLASS}`}
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs">CSS header</Label>
-        <Textarea
-          value={endpoint.css || ''}
-          onChange={(event) =>
-            onUpdateHeader({
-              endpoint: { ...endpoint, css: event.target.value },
-            })
-          }
-          className={`min-h-24 ${MONO_TEXTAREA_CLASS}`}
-        />
-      </div>
-    </PanelShell>
+    <Shell title="Свойства">
+      <p className="text-[#B0B0B0] text-sm">Элемент выбран, но для него пока нет отдельной панели.</p>
+      {type && <p className="text-[#7F8792] text-xs mt-2">Тип: {type}</p>}
+    </Shell>
   );
 }
 
-/**
- * ============================================
- * BLOCK: Content Panel
- * VERSION: 1.0.0
- * PURPOSE:
- * Редактирование content-isolator свойств.
- * ============================================
- */
-function ContentPropertiesPanel({
-  selectedSection,
-  onUpdateContent,
-}: {
-  selectedSection: SelectedSectionContext;
-  onUpdateContent: (updates: ContentUpdateInput) => void;
-}) {
-  const { section } = selectedSection;
-  const endpoint = section.content.endpoint || createDefaultContentEndpoint();
+// ============================================
+// Root
+// ============================================
 
-  return (
-    <PanelShell title="Свойства content">
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs">ID content</Label>
-        <Input value={section.content.id} readOnly className={READONLY_INPUT_CLASS} />
-      </div>
-
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs flex items-center gap-2">
-          <Rows3 className="w-3 h-3" />
-          Название
-        </Label>
-        <Input
-          value={section.content.name}
-          onChange={(event) => onUpdateContent({ name: event.target.value })}
-          className={`h-9 ${INPUT_CLASS}`}
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs">Описание</Label>
-        <Textarea
-          value={section.content.description}
-          onChange={(event) => onUpdateContent({ description: event.target.value })}
-          className={`min-h-20 ${TEXTAREA_CLASS}`}
-        />
-      </div>
-
-      <div className="space-y-2 text-xs text-[#B0B0B0]">
-        <div className="flex justify-between">
-          <span>Блоков внутри</span>
-          <span className="text-white">{section.content.blocks.length}</span>
-        </div>
-      </div>
-
-      <SectionDivider />
-
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs">HTML content</Label>
-        <Textarea
-          value={endpoint.html || ''}
-          onChange={(event) =>
-            onUpdateContent({
-              endpoint: { ...endpoint, html: event.target.value },
-            })
-          }
-          className={`min-h-32 ${MONO_TEXTAREA_CLASS}`}
-        />
-      </div>
-
-      <div className="space-y-2">
-        <Label className="text-[#B0B0B0] text-xs">CSS content</Label>
-        <Textarea
-          value={endpoint.css || ''}
-          onChange={(event) =>
-            onUpdateContent({
-              endpoint: { ...endpoint, css: event.target.value },
-            })
-          }
-          className={`min-h-24 ${MONO_TEXTAREA_CLASS}`}
-        />
-      </div>
-    </PanelShell>
-  );
-}
-
-/**
- * ============================================
- * BLOCK: Fallback Panel
- * VERSION: 1.0.0
- * PURPOSE:
- * Резервное состояние для неподдержанного selected type.
- * ============================================
- */
-function FallbackPanel() {
-  return (
-    <PanelShell title="Свойства">
-      <p className="text-[#B0B0B0] text-sm">
-        Элемент выбран, но для него пока нет отдельной панели.
-      </p>
-    </PanelShell>
-  );
-}
-
-/**
- * ============================================
- * MODULE: Properties Panel Root
- * VERSION: 1.3.0
- * ROLE:
- * Корневой координатор панели свойств.
- * ============================================
- */
 export function PropertiesPanel() {
+  const store = useProjectStore() as Store;
   const {
     project,
     selectedElement,
+    viewMode,
     updateBlock,
+    updateBlockScreen,
+    resetBlockScreen,
     updateHeader,
     updateSection,
     updateContent,
+    updateProjectMeta,
+    updateProjectCustomLogic,
+    updateProjectDesignSystem,
+    updateProjectTheme,
+    updateProjectExportConfig,
     removeBlock,
     removeSection,
     duplicateSection,
-    moveBlock,
     saveBlockToCustomLibrary,
     duplicateBlock,
-  } = useProjectStore();
+    currentPageId,
+  } = store;
 
-  const currentPage = project.pages[0];
-  const selectedType = selectedElement?.type;
+  const extProject = project as ExtProject;
+  const page = useMemo(() => curPage(project, currentPageId), [project, currentPageId]);
+  const selB = useMemo(() => selBlockCtx(page, selectedElement), [page, selectedElement]);
+  const selS = useMemo(() => selSectionCtx(page, selectedElement), [page, selectedElement]);
 
-  /**
-   * ============================================
-   * BLOCK: Selection Contexts
-   * VERSION: 1.0.0
-   * PURPOSE:
-   * Подготовка контекста выбранных сущностей для subpanels.
-   * ============================================
-   */
-  const selectedBlock = resolveSelectedBlock(currentPage, selectedElement);
-  const selectedSection = resolveSelectedSection(currentPage, selectedElement);
+  const hUpdateBlock = useCallback(
+    (u: Partial<ExtBlock> & { layout?: BlockLayout }) => {
+      if (!selB) return;
+      updateBlock(selB.pageId, selB.sectionId, selB.block.id, u);
+    },
+    [selB, updateBlock]
+  );
 
-  /**
-   * ============================================
-   * BLOCK: Action Adapters
-   * VERSION: 1.1.0
-   * PURPOSE:
-   * Унификация store-экшенов под текущий selection context.
-   * ============================================
-   */
-  const handleUpdateBlock = (updates: Parameters<typeof updateBlock>[3]) => {
-    if (!selectedBlock) return;
-    updateBlock(selectedBlock.pageId, selectedBlock.sectionId, selectedBlock.block.id, updates);
-  };
+  const hUpdateScreen = useCallback(
+    (vm: ViewMode, u: ScreenOverride) => {
+      if (!selB || !updateBlockScreen) return;
+      updateBlockScreen(selB.pageId, selB.sectionId, selB.block.id, vm, u);
+    },
+    [selB, updateBlockScreen]
+  );
 
-  const handleUpdateSection = (updates: Parameters<typeof updateSection>[2]) => {
-    if (!selectedSection) return;
-    updateSection(selectedSection.pageId, selectedSection.section.id, updates);
-  };
+  const hResetScreen = useCallback(
+    (vm: ViewMode) => {
+      if (!selB || !resetBlockScreen) return;
+      resetBlockScreen(selB.pageId, selB.sectionId, selB.block.id, vm);
+      toast.success(`${SCR_LBLS[vm]} переопределение сброшено`);
+    },
+    [selB, resetBlockScreen]
+  );
 
-  const handleUpdateHeader = (updates: Parameters<typeof updateHeader>[2]) => {
-    if (!selectedSection) return;
-    updateHeader(selectedSection.pageId, selectedSection.section.id, updates);
-  };
+  const hUpdateSection = useCallback(
+    (u: Partial<Section>) => {
+      if (!selS) return;
+      updateSection(selS.pageId, selS.section.id, u);
+    },
+    [selS, updateSection]
+  );
 
-  const handleUpdateContent = (updates: Parameters<typeof updateContent>[2]) => {
-    if (!selectedSection) return;
-    updateContent(selectedSection.pageId, selectedSection.section.id, updates);
-  };
+  const hUpdateHeader = useCallback(
+    (u: Partial<HeaderIsolator>) => {
+      if (!selS) return;
+      updateHeader(selS.pageId, selS.section.id, u);
+    },
+    [selS, updateHeader]
+  );
 
-  const handleRemoveBlock = () => {
-    if (!selectedBlock) return;
+  const hUpdateContent = useCallback(
+    (u: Partial<ContentIsolator>) => {
+      if (!selS) return;
+      updateContent(selS.pageId, selS.section.id, u);
+    },
+    [selS, updateContent]
+  );
 
-    removeBlock(selectedBlock.pageId, selectedBlock.sectionId, selectedBlock.block.id);
-  };
+  const hDelBlock = useCallback(() => {
+    if (!selB) return;
+    removeBlock(selB.pageId, selB.sectionId, selB.block.id);
+  }, [selB, removeBlock]);
 
-  const handleRemoveSection = () => {
-    if (!selectedSection) return;
-
-    removeSection(selectedSection.pageId, selectedSection.section.id);
+  const hDelSection = useCallback(() => {
+    if (!selS) return;
+    removeSection(selS.pageId, selS.section.id);
     toast.success('Секция удалена');
-  };
+  }, [selS, removeSection]);
 
-  const handleDuplicateSection = () => {
-    if (!selectedSection) return;
-
-    duplicateSection(selectedSection.pageId, selectedSection.section.id);
+  const hDupSection = useCallback(() => {
+    if (!selS) return;
+    duplicateSection(selS.pageId, selS.section.id);
     toast.success('Секция продублирована');
-  };
+  }, [selS, duplicateSection]);
 
-  const handleMoveBlock = (direction: Direction) => {
-    if (!selectedBlock) return;
+  const hSaveCustom = useCallback(() => {
+    if (!selB) return;
+    saveBlockToCustomLibrary(selB.pageId, selB.sectionId, selB.block.id);
+    toast.success('Блок сохранён в избранное');
+  }, [selB, saveBlockToCustomLibrary]);
 
-    moveBlock(
-      selectedBlock.pageId,
-      selectedBlock.sectionId,
-      selectedBlock.block.id,
-      direction
-    );
-  };
-
-  const handleSaveToCustom = () => {
-    if (!selectedBlock) return;
-
-    saveBlockToCustomLibrary(
-      selectedBlock.pageId,
-      selectedBlock.sectionId,
-      selectedBlock.block.id
-    );
-    toast.success('Блок сохранён в Custom');
-  };
-
-  const handleDuplicateBlock = () => {
-    if (!selectedBlock) return;
-
-    duplicateBlock(
-      selectedBlock.pageId,
-      selectedBlock.sectionId,
-      selectedBlock.block.id
-    );
+  const hDupBlock = useCallback(() => {
+    if (!selB) return;
+    duplicateBlock(selB.pageId, selB.sectionId, selB.block.id);
     toast.success('Блок продублирован');
-  };
+  }, [selB, duplicateBlock]);
 
-  /**
-   * ============================================
-   * BLOCK: Rendering Switch
-   * VERSION: 1.1.0
-   * PURPOSE:
-   * Маршрутизация в нужную property subpanel.
-   * ============================================
-   */
+  // No selection → project panel
   if (!selectedElement) {
-    return <EmptyStatePanel />;
-  }
-
-  if (selectedBlock) {
     return (
-      <BlockPropertiesPanel
-        selectedBlock={selectedBlock}
-        onUpdateBlock={handleUpdateBlock}
-        onMoveBlock={handleMoveBlock}
-        onSaveToCustom={handleSaveToCustom}
-        onDuplicateBlock={handleDuplicateBlock}
-        onRemoveBlock={handleRemoveBlock}
+      <ProjectPanel
+        project={extProject}
+        onMeta={(u) => updateProjectMeta?.(u)}
+        onLogic={(u) => updateProjectCustomLogic?.(u)}
+        onDesign={(u) => updateProjectDesignSystem?.(u)}
+        onTheme={(m, u) => updateProjectTheme?.(m, u)}
+        onExport={(u) => updateProjectExportConfig?.(u)}
       />
     );
   }
 
-  if (!selectedSection) {
-    return null;
+  // Block selected
+  if (selB) {
+    return (
+      <BlockPanel
+        ctx={selB}
+        viewMode={viewMode}
+        onUpdate={hUpdateBlock}
+        onUpdateScreen={hUpdateScreen}
+        onResetScreen={hResetScreen}
+        onSave={hSaveCustom}
+        onDup={hDupBlock}
+        onDel={hDelBlock}
+      />
+    );
   }
 
-  switch (selectedType) {
+  // No section resolved
+  if (!selS) return null;
+
+  // Section-level elements
+  switch (selectedElement.type) {
     case 'section':
       return (
-        <SectionPropertiesPanel
-          selectedSection={selectedSection}
-          onUpdateSection={handleUpdateSection}
-          onDuplicateSection={handleDuplicateSection}
-          onRemoveSection={handleRemoveSection}
+        <SectionPanel
+          ctx={selS}
+          onUpdate={hUpdateSection}
+          onDup={hDupSection}
+          onDel={hDelSection}
         />
       );
-
     case 'header':
       return (
-        <HeaderPropertiesPanel
-          selectedSection={selectedSection}
-          onUpdateHeader={handleUpdateHeader}
-        />
+        <HeaderPanel ctx={selS} onUpdate={hUpdateHeader} />
       );
-
     case 'content':
       return (
-        <ContentPropertiesPanel
-          selectedSection={selectedSection}
-          onUpdateContent={handleUpdateContent}
-        />
+        <ContentPanel ctx={selS} onUpdate={hUpdateContent} />
       );
-
     default:
-      return <FallbackPanel />;
+      return <Fallback type={selectedElement.type} />;
   }
 }
