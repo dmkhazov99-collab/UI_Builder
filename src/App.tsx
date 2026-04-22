@@ -1,17 +1,18 @@
 /**
  * ============================================
  * MODULE: App Root Shell
- * VERSION: 1.0.0
+ * VERSION: 2.0.0
  * ROLE:
  * Корневой UI-shell приложения-конструктора.
  * Собирает верхний layout builder-интерфейса и
  * переключает view-слой в зависимости от текущего режима.
  *
  * RESPONSIBILITIES:
- * - Рендерить общий shell приложения
- * - Подключать toolbar, side panels и active workspace panel
- * - Разводить edit/code/preview режимы на уровне UI-композиции
- * - Подключать глобальный toaster
+ * - рендерить общий shell приложения
+ * - подключать toolbar, side panels и active workspace panel
+ * - разводить edit/code/preview режимы на уровне UI-композиции
+ * - подключать глобальный toaster
+ * - сохранять единый shell для builder/edit/code/preview режимов
  *
  * DEPENDS ON:
  * - Toolbar
@@ -27,42 +28,47 @@
  * - main entrypoint приложения
  *
  * RULES:
- * - Не содержит runtime/export logic
- * - Не знает деталей HTML generation pipeline
- * - Только компоновка root-level UI
+ * - не содержит runtime/export logic
+ * - не знает деталей HTML generation pipeline
+ * - только компоновка root-level UI
+ * - project properties отображаются внутри PropertiesPanel
+ *   при отсутствии selected element
  *
  * SECURITY:
- * - Этот модуль не должен напрямую исполнять пользовательский HTML/CSS/JS
- * - Любые unsafe preview/runtime-механики должны оставаться в dedicated preview/runtime слоях
+ * - этот модуль не должен напрямую исполнять пользовательский HTML/CSS/JS
+ * - любые unsafe preview/runtime-механики должны оставаться
+ *   в dedicated preview/runtime слоях
  * ============================================
  */
 
-import { Toolbar } from '@/panels/Toolbar';
-import { LibraryPanel } from '@/panels/LibraryPanel';
-import { Canvas } from '@/panels/Canvas';
-import { PreviewPanel } from '@/panels/PreviewPanel';
-import { CodePanel } from '@/panels/CodePanel';
-import { PropertiesPanel } from '@/panels/PropertiesPanel';
-import { useProjectStore } from '@/store/projectStore';
 import { Toaster } from '@/components/ui/sonner';
+import { Canvas } from '@/panels/Canvas';
+import { CodePanel } from '@/panels/CodePanel';
+import { LibraryPanel } from '@/panels/LibraryPanel';
+import { PreviewPanel } from '@/panels/PreviewPanel';
+import { PropertiesPanel } from '@/panels/PropertiesPanel';
+import { Toolbar } from '@/panels/Toolbar';
+import { useProjectStore } from '@/store/projectStore';
 
 /**
  * ============================================
  * BLOCK: UI Constants
- * VERSION: 1.0.0
+ * VERSION: 2.0.0
  * PURPOSE:
  * Общие UI-константы root shell уровня.
  * ============================================
  */
 const APP_SHELL_CLASS_NAME =
-  'h-screen flex flex-col bg-[#0c1016] text-white overflow-hidden ui-builder-shell';
+  'ui-builder-shell h-screen flex flex-col overflow-hidden bg-[var(--surface-canvas)] text-[var(--text-primary)]';
 
-const WORKSPACE_CLASS_NAME = 'flex-1 flex flex-col min-w-0';
+const WORKSPACE_CLASS_NAME =
+  'flex-1 flex flex-col min-w-0';
 
 const TOASTER_STYLE = {
   background: '#1A1A1C',
-  border: '1px solid #313133',
-  color: '#FFFFFF',
+  border: '1px solid #2C2C2C',
+  color: 'var(--text-primary)',
+  backdropFilter: 'blur(10px)',
 };
 
 /**
@@ -77,9 +83,9 @@ const TOASTER_STYLE = {
 function ActiveWorkspacePanel() {
   const { mode } = useProjectStore();
 
-  if (mode === 'code') {
-    return <CodePanel />;
-  }
+if (mode === 'code') {
+  return <CodePanel />;
+}
 
   if (mode === 'preview') {
     return <PreviewPanel />;
@@ -90,10 +96,10 @@ function ActiveWorkspacePanel() {
 
 /**
  * ============================================
- * BLOCK: Root Component
- * VERSION: 1.0.0
+ * BLOCK: Shell Layout
+ * VERSION: 2.0.0
  * PURPOSE:
- * Собирает корневую композицию builder-интерфейса.
+ * Компоновка root shell с учётом текущего режима.
  * ============================================
  */
 function App() {
@@ -103,14 +109,16 @@ function App() {
     <div className={APP_SHELL_CLASS_NAME}>
       <Toolbar />
 
-      <div className="flex-1 flex overflow-hidden">
-        {mode === 'edit' && <LibraryPanel />}
+      <div className="flex flex-1 overflow-hidden">
+        {mode === 'edit' ? <LibraryPanel /> : null}
 
-        <main className={WORKSPACE_CLASS_NAME}>
+        <main
+          className={`${WORKSPACE_CLASS_NAME} ${mode === 'code' ? 'bg-[#1A1A1C]' : 'bg-[var(--surface-canvas)]'}`}
+        >
           <ActiveWorkspacePanel />
         </main>
 
-        {mode === 'edit' && <PropertiesPanel />}
+        {mode === 'edit' ? <PropertiesPanel /> : null}
       </div>
 
       <Toaster

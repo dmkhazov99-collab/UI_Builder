@@ -1,7 +1,7 @@
 /**
  * ============================================
  * MODULE: Library Panel
- * VERSION: 1.3.0
+ * VERSION: 2.0.0
  * ROLE:
  * Левая панель библиотеки builder-компонентов.
  *
@@ -10,6 +10,8 @@
  * - фильтровать библиотеку по типу и поиску
  * - добавлять блок в активную или первую доступную секцию
  * - удалять custom шаблоны из пользовательской библиотеки
+ * - показывать превью base-layout блока
+ * - подготавливать библиотеку к responsive block model
  *
  * DEPENDS ON:
  * - useProjectStore()
@@ -23,6 +25,7 @@
  * - панель не рендерит builder content
  * - панель только создаёт/добавляет шаблоны
  * - если активная секция не определена, используется первая доступная
+ * - preview карточки должен отражать base state блока
  *
  * SECURITY:
  * - пользовательский HTML здесь не исполняется
@@ -31,19 +34,18 @@
  */
 
 import { useMemo, useState } from 'react';
-import { Blocks, Plus, Search, Square, Star, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { cloneBlockForCanvas, createNewBlock, useProjectStore } from '@/store/projectStore';
-import type { SelectedElement } from '@/types/project';
+import type { Block, SelectedElement } from '@/types/project';
 
 /**
  * ============================================
  * BLOCK: Shared Types
- * VERSION: 1.0.0
+ * VERSION: 2.0.0
  * PURPOSE:
  * Локальные типы панели библиотеки.
  * ============================================
@@ -70,6 +72,33 @@ type CustomLibraryItem = {
 
 type LibraryItem = BaseLibraryItem | CustomLibraryItem;
 
+type ExtendedBlock = Block & {
+  layout?: {
+    x?: number;
+    y?: number;
+    w?: number;
+    h?: number;
+  };
+  visible?: boolean;
+  responsive?: Record<
+    string,
+    {
+      html?: string;
+      visible?: boolean;
+      layout?: Partial<{
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+      }>;
+    }
+  >;
+  runtime?: {
+    css?: string;
+    javascript?: string;
+  };
+};
+
 /**
  * ============================================
  * BLOCK: UI Constants
@@ -85,19 +114,22 @@ const SEARCH_INPUT_CLASS =
   'h-9 bg-[#111111] border-[#313133] text-white placeholder:text-[#6F6F73]';
 
 const FILTER_BUTTON_BASE_CLASS =
-  'h-8 w-full justify-center px-3 text-xs border-[#313133] bg-[#111111] text-[#B0B0B0] hover:text-white hover:bg-[#181818]';
+  'h-8 w-full justify-center px-3 text-xs border-[#313133] bg-[#111111] text-[#B0B0B0] hover:text-white hover:bg-[#181818] rounded-md';
 
 const FILTER_BUTTON_ACTIVE_CLASS =
-  'bg-[#2A80F4]/15 text-white border-[#2A80F4]/40 hover:bg-[#2A80F4]/20';
+  'bg-[#2A80F4]/15 text-white border-[#2A80F4]/40 hover:bg-[#2A80F4]/20 rounded-md';
 
-const CARD_CLASS = 'rounded-xl border border-[#313133] bg-[#111111] p-3';
+const CARD_CLASS = 'rounded-md border border-[#313133] bg-[#111111] p-3';
 
 /**
  * ============================================
  * BLOCK: Base Inventory
- * VERSION: 1.1.0
+ * VERSION: 2.0.0
  * PURPOSE:
  * Стандартные builder-блоки, доступные всегда.
+ *
+ * NOTES:
+ * Все базовые блоки создаются с base-layout 2x3.
  * ============================================
  */
 const BASE_LIBRARY_ITEMS: BaseLibraryItem[] = [
@@ -105,7 +137,7 @@ const BASE_LIBRARY_ITEMS: BaseLibraryItem[] = [
     id: 'base-info',
     category: 'base',
     name: 'Базовый блок',
-    description: 'Блок для текста и HTML-содержимого.',
+    description: 'Блок для текста и HTML-содержимого. Поддерживает base HTML и screen overrides.',
     preview: '2×3 • info',
     create: () => createNewBlock('block-info', 2, 3),
   },
@@ -113,15 +145,16 @@ const BASE_LIBRARY_ITEMS: BaseLibraryItem[] = [
     id: 'base-button',
     category: 'base',
     name: 'Блок кнопка',
-    description: 'Интерактивный блок.',
+    description: 'Интерактивный блок. Подходит для CTA и событийной логики.',
     preview: '2×3 • button',
     create: () => createNewBlock('block-button', 2, 3),
   },
-    {
+  {
     id: 'base-placeholder',
     category: 'base',
     name: 'Заглушка',
-    description: 'Пустой прозрачный блок для отступов, сетки и компоновки.',
+    description:
+      'Пустой прозрачный блок для отступов, сетки и компоновки. Удобен как spacer и layout-slot.',
     preview: '2×3 • placeholder',
     create: () => createNewBlock('block-placeholder', 2, 3),
   },
@@ -130,7 +163,7 @@ const BASE_LIBRARY_ITEMS: BaseLibraryItem[] = [
 /**
  * ============================================
  * BLOCK: Helper Utilities
- * VERSION: 1.1.0
+ * VERSION: 2.0.0
  * PURPOSE:
  * Локальные pure helper-функции панели библиотеки.
  * ============================================
@@ -162,6 +195,69 @@ function resolveTargetSectionId(
   }
 
   return currentPage.sections[0]?.id ?? null;
+}
+
+function getBlockBaseWidth(block: ExtendedBlock): number {
+  return block.layout?.w ?? block.span ?? 2;
+}
+
+function getBlockBaseHeight(block: ExtendedBlock): number {
+  return block.layout?.h ?? block.rowSpan ?? 3;
+}
+
+function getBlockPreviewType(block: Block): string {
+  if (block.type === 'block-button') return 'button';
+  if (block.type === 'block-placeholder') return 'placeholder';
+  return 'info';
+}
+
+function getResponsiveStateCount(block: ExtendedBlock): number {
+  if (!block.responsive) return 0;
+
+  return Object.values(block.responsive).filter((screenConfig) => {
+    if (!screenConfig) return false;
+
+    return (
+      typeof screenConfig.html === 'string' ||
+      typeof screenConfig.visible === 'boolean' ||
+      Boolean(screenConfig.layout && Object.keys(screenConfig.layout).length > 0)
+    );
+  }).length;
+}
+
+function buildBlockPreview(block: ExtendedBlock): string {
+  const width = getBlockBaseWidth(block);
+  const height = getBlockBaseHeight(block);
+  const typeLabel = getBlockPreviewType(block);
+  const responsiveCount = getResponsiveStateCount(block);
+
+  if (responsiveCount > 0) {
+    return `${width}×${height} • ${typeLabel} • ${responsiveCount} override`;
+  }
+
+  return `${width}×${height} • ${typeLabel}`;
+}
+
+function buildCustomDescription(block: ExtendedBlock, fallbackDescription?: string): string {
+  const runtimeCss = Boolean(block.runtime?.css?.trim());
+  const runtimeJs = Boolean(block.runtime?.javascript?.trim());
+  const responsiveCount = getResponsiveStateCount(block);
+
+  if (fallbackDescription?.trim()) {
+    return fallbackDescription;
+  }
+
+  const flags = [
+    responsiveCount > 0 ? `${responsiveCount} responsive state` : null,
+    runtimeCss ? 'local CSS' : null,
+    runtimeJs ? 'local JS' : null,
+  ].filter(Boolean);
+
+  if (flags.length > 0) {
+    return `Пользовательский блок: ${flags.join(' · ')}`;
+  }
+
+  return 'Пользовательский сохранённый блок';
 }
 
 /**
@@ -200,7 +296,7 @@ function FilterSegmentButton({
 /**
  * ============================================
  * BLOCK: Library Card
- * VERSION: 1.0.0
+ * VERSION: 1.1.0
  * PURPOSE:
  * Карточка одного элемента библиотеки.
  * ============================================
@@ -220,27 +316,18 @@ function LibraryCard({
     <div className={CARD_CLASS}>
       <div className="mb-2 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            {isCustom ? (
-              <Star className="h-4 w-4 shrink-0 text-[#f5c96a]" />
-            ) : (
-              <Square className="h-4 w-4 shrink-0 text-[#7fb1ff]" />
-            )}
-
-            <div className="truncate text-sm font-medium text-white">{item.name}</div>
-          </div>
-
+          <div className="truncate text-sm font-medium text-white">{item.name}</div>
           <div className="mt-1 text-[11px] text-[#7F8792]">{item.preview}</div>
         </div>
 
         {isCustom ? (
           <Button
             variant="outline"
-            size="icon"
-            className="h-8 w-8 border-[#5c2d35] bg-[#171717] text-[#ff8d9d] hover:bg-[#2a171b]"
+            size="sm"
+            className="h-8 text-xs bg-[#111111] border-[#FF4053]/30 text-[#FF4053] hover:bg-[#FF4053]/10 rounded-md"
             onClick={() => onDeleteCustom(item.blockId)}
           >
-            <Trash2 className="h-4 w-4" />
+            Удалить
           </Button>
         ) : null}
       </div>
@@ -250,10 +337,9 @@ function LibraryCard({
       <Button
         variant="outline"
         size="sm"
-        className="w-full border-[#313133] bg-[#171717] text-white hover:bg-[#1e1e1f]"
+        className="w-full h-9 text-xs bg-[#111111] border-[#313133] text-[#B0B0B0] hover:text-white rounded-md"
         onClick={() => onAdd(item)}
       >
-        <Plus className="mr-2 h-4 w-4" />
         Добавить
       </Button>
     </div>
@@ -263,7 +349,7 @@ function LibraryCard({
 /**
  * ============================================
  * MODULE: Library Panel Root
- * VERSION: 1.3.0
+ * VERSION: 2.0.0
  * ROLE:
  * Корневой координатор builder library panel.
  * ============================================
@@ -287,20 +373,24 @@ export function LibraryPanel() {
   /**
    * ============================================
    * BLOCK: Custom Inventory Mapping
-   * VERSION: 1.0.0
+   * VERSION: 2.0.0
    * PURPOSE:
    * Преобразование project.componentLibrary в UI-элементы панели.
    * ============================================
    */
   const customItems: CustomLibraryItem[] = useMemo(() => {
-    return project.componentLibrary.blocks.map((item) => ({
-      id: item.id,
-      category: 'custom',
-      name: item.name,
-      description: item.description || 'Пользовательский сохранённый блок',
-      preview: item.preview || `${item.block.span}×${item.block.rowSpan}`,
-      blockId: item.id,
-    }));
+    return project.componentLibrary.blocks.map((item) => {
+      const block = item.block as ExtendedBlock;
+
+      return {
+        id: item.id,
+        category: 'custom',
+        name: item.name,
+        description: buildCustomDescription(block, item.description),
+        preview: item.preview || buildBlockPreview(block),
+        blockId: item.id,
+      };
+    });
   }, [project.componentLibrary.blocks]);
 
   /**
@@ -351,7 +441,7 @@ export function LibraryPanel() {
       return;
     }
 
-    let nextBlock;
+    let nextBlock: ReturnType<typeof createNewBlock> | Block;
 
     if (item.category === 'base') {
       nextBlock = item.create();
@@ -387,23 +477,19 @@ export function LibraryPanel() {
 
   return (
     <div className={PANEL_CLASS}>
-      <div className="h-12 shrink-0 flex items-center px-4 border-b border-[#313133]">
-        <Blocks className="w-4 h-4 text-[#2A80F4] mr-2" />
+      <div className="h-12 shrink-0 flex items-center px-3 border-b border-[#313133]">
         <span className="font-medium text-white text-sm">Библиотека</span>
       </div>
 
-      <div className="shrink-0 border-b border-[#313133] px-4 pt-4 pb-7 space-y-3">
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6F6F73]" />
-          <Input
-            value={searchValue}
-            onChange={(event) => setSearchValue(event.target.value)}
-            placeholder="Поиск блоков"
-            className={`${SEARCH_INPUT_CLASS} pl-9`}
-          />
-        </div>
+      <div className="shrink-0 border-b border-[#313133] p-3 space-y-3">
+        <Input
+          value={searchValue}
+          onChange={(event) => setSearchValue(event.target.value)}
+          placeholder="Поиск блоков"
+          className={`${SEARCH_INPUT_CLASS} rounded-md`}
+        />
 
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-3 gap-3" style={{ marginBottom: 10 }}>
           <FilterSegmentButton
             label="Все"
             value="all"
@@ -426,9 +512,9 @@ export function LibraryPanel() {
       </div>
 
       <ScrollArea className="scroll-theme flex-1 min-h-0">
-        <div className="p-4 space-y-3">
+        <div className="p-3 space-y-3">
           {items.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-[#313133] bg-[#111111] px-4 py-8 text-center">
+            <div className="rounded-md border border-dashed border-[#313133] bg-[#111111] p-3 text-center">
               <div className="mb-2 text-sm text-white">Ничего не найдено</div>
               <div className="text-xs text-[#8A8A8A]">
                 Попробуй изменить фильтр или поисковый запрос.

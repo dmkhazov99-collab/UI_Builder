@@ -1,47 +1,60 @@
 /**
  * ============================================
  * MODULE: Builder Canvas
- * VERSION: 1.3.0
+ * VERSION: 4.2.0
  * ROLE:
  * Центральный визуальный холст builder-интерфейса.
  *
  * RESPONSIBILITIES:
- * - визуализировать текущую страницу проекта
- * - показывать секции, header/content и блоки
- * - поддерживать selection
- * - не ломать builder UI при росте возможностей проекта
+ * - показывать реальный project preview как нижний слой
+ * - показывать editor overlay как верхний слой
+ * - поддерживать selection без выполнения runtime-логики проекта
+ * - читать реальные координаты section/header/content/block из iframe DOM
+ * - держать builder и preview в одном визуальном pipeline
  *
  * DEPENDS ON:
  * - useProjectStore()
- * - Project / Section / Block / SelectedElement
+ * - getProjectPreviewHtml()
  * - cn()
  *
  * USED BY:
  * - App.tsx
  *
  * RULES:
- * - Canvas только визуализирует builder state
- * - selection не должна зависеть от runtime preview
- * - builder и preview остаются разными слоями
- * - block-placeholder не должен огибаться скруглением в editor layer
+ * - нижний слой рендерит тот же HTML, что preview/code/export
+ * - верхний слой отвечает только за editor visualization
+ * - selection не должна зависеть от runtime click handlers
+ * - builder не должен становиться вторым runtime-движком приложения
+ * - клик по preview не должен запускать логику проекта
+ * - overlay должен строиться по реальному DOM preview, а не по расчётной сетке
  *
  * SECURITY:
- * - HTML здесь остаётся trusted-only
- * - builder не должен становиться вторым runtime-движком приложения
- * - любые будущие untrusted-сценарии должны идти через sanitization/isolation layer
+ * - runtime HTML здесь остаётся trusted-only внутри builder workflow
+ * - iframe preview используется как визуальная поверхность
+ * - пользователь не должен кликать по runtime-элементам внутри iframe
  * ============================================
  */
 
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react';
+
+import { getProjectPreviewHtml } from '@/core/projectRuntimeHtml';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import { cn } from '@/lib/utils';
 import { useProjectStore } from '@/store/projectStore';
-import type { Block, Section, SelectedElement } from '@/types/project';
+import type { Section, SelectedElement } from '@/types/project';
 
 /**
  * ============================================
  * BLOCK: Shared Constants
- * VERSION: 1.0.0
+ * VERSION: 4.2.0
  * PURPOSE:
- * Централизованные размеры и значения builder-canvas.
+ * Централизованные размеры builder canvas и overlay.
  * ============================================
  */
 const CANVAS_FRAME_WIDTHS = {
@@ -50,47 +63,300 @@ const CANVAS_FRAME_WIDTHS = {
   mobile: '375px',
 } as const;
 
-const CANVAS_FRAME_LABELS = {
-  desktop: 'Desktop (900px)',
-  tablet: 'Tablet (768px)',
-  mobile: 'Mobile (375px)',
-} as const;
-
-const DEFAULT_SECTION_MAX_WIDTH = '900px';
-const DEFAULT_HEADER_HEIGHT = '88px';
-const DEFAULT_GRID_COLUMNS = 'repeat(6, 1fr)';
-const DEFAULT_GRID_ROW = '22px';
-const DEFAULT_GRID_GAP = '12px';
+const DEFAULT_MIN_PREVIEW_HEIGHT_PX = 320;
+const DEFAULT_OVERLAY_LABEL_CLASS = '-top-6 right-0';
 
 /**
  * ============================================
- * BLOCK: Trusted HTML Renderer
+ * BLOCK: DOM Overlay Types
  * VERSION: 1.0.0
  * PURPOSE:
- * Единая точка рендера trusted-only HTML внутри builder canvas.
- *
- * NOTES:
- * Это не preview-runtime и не export-runtime.
- * Это только визуализация внутри editor layer.
+ * Typed map для координат элементов preview DOM.
  * ============================================
  */
-interface TrustedHtmlProps {
-  html: string;
-  className?: string;
-  style?: React.CSSProperties;
+type DomRectSnapshot = {
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+};
+
+type OverlayNodeSnapshot = {
+  id: string;
+  rect: DomRectSnapshot;
+};
+
+type OverlaySnapshotMap = {
+  sections: Map<string, OverlayNodeSnapshot>;
+  headers: Map<string, OverlayNodeSnapshot>;
+  contents: Map<string, OverlayNodeSnapshot>;
+  blocks: Map<string, OverlayNodeSnapshot>;
+};
+
+/**
+ * ============================================
+ * BLOCK: Selection Helpers
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Нормализованные проверки selected element.
+ * ============================================
+ */
+function isSelectedElement(
+  selectedElement: SelectedElement | null,
+  type: SelectedElement['type'],
+  id: string
+): boolean {
+  return selectedElement?.type === type && selectedElement.id === id;
 }
 
-function TrustedHtml({ html, className, style }: TrustedHtmlProps) {
+function isPointInsideRect(
+  rect: DomRectSnapshot,
+  x: number,
+  y: number
+): boolean {
   return (
-    <div
-      className={className}
-      style={{
-        pointerEvents: 'none',
-        userSelect: 'none',
-        ...style,
-      }}
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    x >= rect.left &&
+    x <= rect.left + rect.width &&
+    y >= rect.top &&
+    y <= rect.top + rect.height
+  );
+}
+
+function resolveSelectedElementFromPoint(
+  snapshot: OverlaySnapshotMap,
+  sections: Section[],
+  x: number,
+  y: number
+): SelectedElement | null {
+  const blockEntry = Array.from(snapshot.blocks.values()).find((entry) =>
+    isPointInsideRect(entry.rect, x, y)
+  );
+
+  if (blockEntry) {
+    const section = findSectionByBlockId(sections, blockEntry.id);
+
+    return {
+      type: 'block',
+      id: blockEntry.id,
+      parentId: section?.id,
+    };
+  }
+
+  const contentEntry = Array.from(snapshot.contents.values()).find((entry) =>
+    isPointInsideRect(entry.rect, x, y)
+  );
+
+  if (contentEntry) {
+    const section = findSectionByContentId(sections, contentEntry.id);
+
+    return {
+      type: 'content',
+      id: contentEntry.id,
+      parentId: section?.id,
+    };
+  }
+
+  const headerEntry = Array.from(snapshot.headers.values()).find((entry) =>
+    isPointInsideRect(entry.rect, x, y)
+  );
+
+  if (headerEntry) {
+    const section = findSectionByHeaderId(sections, headerEntry.id);
+
+    return {
+      type: 'header',
+      id: headerEntry.id,
+      parentId: section?.id,
+    };
+  }
+
+  const sectionEntry = Array.from(snapshot.sections.values()).find((entry) =>
+    isPointInsideRect(entry.rect, x, y)
+  );
+
+  if (sectionEntry) {
+    return {
+      type: 'section',
+      id: sectionEntry.id,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * ============================================
+ * BLOCK: Overlay Snapshot Helpers
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Чтение реальных DOM bounds из iframe.
+ * ============================================
+ */
+function createEmptyOverlaySnapshotMap(): OverlaySnapshotMap {
+  return {
+    sections: new Map(),
+    headers: new Map(),
+    contents: new Map(),
+    blocks: new Map(),
+  };
+}
+
+function mergeDomRects(rects: DomRectSnapshot[]): DomRectSnapshot | null {
+  if (rects.length === 0) return null;
+
+  const top = Math.min(...rects.map((rect) => rect.top));
+  const left = Math.min(...rects.map((rect) => rect.left));
+  const right = Math.max(...rects.map((rect) => rect.left + rect.width));
+  const bottom = Math.max(...rects.map((rect) => rect.top + rect.height));
+
+  return {
+    top,
+    left,
+    width: right - left,
+    height: bottom - top,
+  };
+}
+
+function readOverlayNodes(
+  doc: Document,
+  selector: string,
+  dataKey: keyof HTMLElement['dataset'],
+  iframeRect: DOMRect,
+  surfaceRect: DOMRect
+): Map<string, OverlayNodeSnapshot> {
+  const result = new Map<string, OverlayNodeSnapshot>();
+
+  doc.querySelectorAll<HTMLElement>(selector).forEach((element) => {
+    const id = element.dataset[dataKey];
+    if (!id) return;
+
+    const rect = element.getBoundingClientRect();
+
+    result.set(id, {
+      id,
+      rect: {
+        top: iframeRect.top + rect.top - surfaceRect.top,
+        left: iframeRect.left + rect.left - surfaceRect.left,
+        width: rect.width,
+        height: rect.height,
+      },
+    });
+  });
+
+  return result;
+}
+
+function collectOverlaySnapshotMap(
+  iframe: HTMLIFrameElement,
+  surfaceElement: HTMLDivElement
+): OverlaySnapshotMap {
+  const doc = iframe.contentDocument;
+  if (!doc) {
+    return createEmptyOverlaySnapshotMap();
+  }
+
+  const iframeRect = iframe.getBoundingClientRect();
+  const surfaceRect = surfaceElement.getBoundingClientRect();
+
+  const headers = readOverlayNodes(
+    doc,
+    '[data-header-id]',
+    'headerId',
+    iframeRect,
+    surfaceRect
+  );
+
+  const contents = readOverlayNodes(
+    doc,
+    '[data-content-id]',
+    'contentId',
+    iframeRect,
+    surfaceRect
+  );
+
+  const blocks = readOverlayNodes(
+    doc,
+    '[data-block-id]',
+    'blockId',
+    iframeRect,
+    surfaceRect
+  );
+
+  const sections = new Map<string, OverlayNodeSnapshot>();
+
+  doc.querySelectorAll<HTMLElement>('[data-section-shell-id]').forEach((element) => {
+    const sectionId = element.dataset.sectionShellId;
+    if (!sectionId) return;
+
+    const headerElement = doc.querySelector<HTMLElement>(
+      `[data-header-id][data-section-id="${sectionId}"]`
+    );
+    const contentElement = doc.querySelector<HTMLElement>(
+      `[data-content-id][data-section-id="${sectionId}"]`
+    );
+
+    const rects: DomRectSnapshot[] = [];
+
+    if (headerElement) {
+      const rect = headerElement.getBoundingClientRect();
+      rects.push({
+        top: iframeRect.top + rect.top - surfaceRect.top,
+        left: iframeRect.left + rect.left - surfaceRect.left,
+        width: rect.width,
+        height: rect.height,
+      });
+    }
+
+    if (contentElement) {
+      const rect = contentElement.getBoundingClientRect();
+      rects.push({
+        top: iframeRect.top + rect.top - surfaceRect.top,
+        left: iframeRect.left + rect.left - surfaceRect.left,
+        width: rect.width,
+        height: rect.height,
+      });
+    }
+
+    const mergedRect = mergeDomRects(rects);
+
+    if (!mergedRect) return;
+
+    sections.set(sectionId, {
+      id: sectionId,
+      rect: mergedRect,
+    });
+  });
+
+  return {
+    sections,
+    headers,
+    contents,
+    blocks,
+  };
+}
+
+
+/**
+ * ============================================
+ * BLOCK: Section Lookup Helpers
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Поиск parent section для selection payload.
+ * ============================================
+ */
+function findSectionByHeaderId(sections: Section[], headerId: string): Section | null {
+  return sections.find((section) => section.header.id === headerId) ?? null;
+}
+
+function findSectionByContentId(sections: Section[], contentId: string): Section | null {
+  return sections.find((section) => section.content.id === contentId) ?? null;
+}
+
+function findSectionByBlockId(sections: Section[], blockId: string): Section | null {
+  return (
+    sections.find((section) =>
+      section.content.blocks.some((block) => block.id === blockId)
+    ) ?? null
   );
 }
 
@@ -104,14 +370,17 @@ function TrustedHtml({ html, className, style }: TrustedHtmlProps) {
  */
 function SelectionOverlay({
   label,
-  labelClassName = '',
+  labelClassName = DEFAULT_OVERLAY_LABEL_CLASS,
 }: {
   label: string;
   labelClassName?: string;
 }) {
   return (
     <>
-      <div className="absolute inset-0 z-50 pointer-events-none border-2 border-[#2A80F4]" />
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 z-50 pointer-events-none border-2 border-[#2A80F4]"
+      />
       <div
         className={cn(
           'absolute z-50 pointer-events-none rounded bg-[#2A80F4] px-2 py-0.5 text-xs text-white',
@@ -126,217 +395,316 @@ function SelectionOverlay({
 
 /**
  * ============================================
- * BLOCK: Block Component
- * VERSION: 1.2.0
+ * BLOCK: Preview Surface
+ * VERSION: 4.2.0
  * PURPOSE:
- * Визуализация блока внутри section content grid.
+ * Реальный runtime preview как нижний слой canvas.
+ *
+ * NOTES:
+ * - использует тот же HTML, что code/export preview pipeline
+ * - сам не участвует в selection UI
+ * - отдаёт наружу актуальную высоту iframe и DOM snapshot
  * ============================================
  */
-interface BlockComponentProps {
-  block: Block;
-  isSelected: boolean;
-  onSelect: () => void;
+interface PreviewSurfaceProps {
+  html: string;
+  frameWidth: string;
+  previewHeight: number;
+  surfaceRef: RefObject<HTMLDivElement | null>;
+  iframeRef: RefObject<HTMLIFrameElement | null>;
+  onHeightChange: (height: number) => void;
+  onSnapshotChange: (snapshot: OverlaySnapshotMap) => void;
 }
 
-function BlockComponent({ block, isSelected, onSelect }: BlockComponentProps) {
-  const modeClass = block.mode !== 'clip' ? `block-${block.mode}` : '';
-  const isButton = block.type === 'block-button';
-  const isPlaceholder = block.type === 'block-placeholder';
+function PreviewSurface({
+  html,
+  frameWidth,
+  previewHeight,
+  surfaceRef,
+  iframeRef,
+  onHeightChange,
+  onSnapshotChange,
+}: PreviewSurfaceProps) {
+  useEffect(() => {
+    const iframe = iframeRef.current;
+    const surface = surfaceRef.current;
+
+    if (!iframe || !surface) return;
+
+    let resizeObserver: ResizeObserver | null = null;
+    let mutationObserver: MutationObserver | null = null;
+    let rafId = 0;
+
+    const updateGeometry = () => {
+      const doc = iframe.contentDocument;
+      if (!doc) return;
+
+      const body = doc.body;
+      const htmlElement = doc.documentElement;
+
+      const nextHeight = Math.max(
+        body?.scrollHeight || 0,
+        body?.offsetHeight || 0,
+        htmlElement?.scrollHeight || 0,
+        htmlElement?.offsetHeight || 0
+      );
+
+      onHeightChange(Math.max(nextHeight, DEFAULT_MIN_PREVIEW_HEIGHT_PX));
+      onSnapshotChange(collectOverlaySnapshotMap(iframe, surface));
+    };
+
+    const scheduleGeometryUpdate = () => {
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(updateGeometry);
+    };
+
+    const handleLoad = () => {
+      scheduleGeometryUpdate();
+
+      const doc = iframe.contentDocument;
+      if (!doc) return;
+
+      if ('ResizeObserver' in window) {
+        resizeObserver = new ResizeObserver(() => {
+          scheduleGeometryUpdate();
+        });
+
+        if (doc.documentElement) resizeObserver.observe(doc.documentElement);
+        if (doc.body) resizeObserver.observe(doc.body);
+      }
+
+      mutationObserver = new MutationObserver(() => {
+        scheduleGeometryUpdate();
+      });
+
+      if (doc.documentElement) {
+        mutationObserver.observe(doc.documentElement, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          characterData: true,
+        });
+      }
+    };
+
+
+
+    iframe.addEventListener('load', handleLoad);
+    window.addEventListener('resize', scheduleGeometryUpdate);
+    window.addEventListener('scroll', scheduleGeometryUpdate, true);
+
+    return () => {
+      iframe.removeEventListener('load', handleLoad);
+      window.removeEventListener('resize', scheduleGeometryUpdate);
+      window.removeEventListener('scroll', scheduleGeometryUpdate, true);
+
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      cancelAnimationFrame(rafId);
+    };
+  }, [
+    html,
+    iframeRef,
+    onHeightChange,
+    onSnapshotChange,
+    surfaceRef,
+  ]);
+
+  return (
+    <iframe
+      ref={iframeRef}
+      title="Builder Preview Surface"
+      srcDoc={html}
+      sandbox="allow-scripts allow-same-origin"
+      className="relative z-0 block w-full border-0 bg-[#111111]"
+      style={{
+        width: frameWidth,
+        height: `${previewHeight}px`,
+        minHeight: `${DEFAULT_MIN_PREVIEW_HEIGHT_PX}px`,
+        pointerEvents: 'none',
+      }}
+    />
+  );
+}
+
+/**
+ * ============================================
+ * BLOCK: Overlay Box
+ * VERSION: 1.0.0
+ * PURPOSE:
+ * Универсальный визуальный прямоугольник над preview DOM.
+ * ============================================
+ */
+interface OverlayBoxProps {
+  rect: DomRectSnapshot;
+  isSelected: boolean;
+  label?: string;
+  labelClassName?: string;
+  className?: string;
+}
+
+function OverlayBox({
+  rect,
+  isSelected,
+  label,
+  labelClassName = DEFAULT_OVERLAY_LABEL_CLASS,
+  className,
+}: OverlayBoxProps) {
+  if (!isSelected || !label) {
+    return null;
+  }
 
   return (
     <div
       className={cn(
-        'relative cursor-pointer transition-all duration-150',
-        'block',
-        modeClass,
-        isSelected && 'ring-2 ring-[#2A80F4] ring-offset-2 ring-offset-[#111111]'
+        'absolute z-20 pointer-events-none transition-all duration-150',
+        className
       )}
       style={{
-        display: 'flex',
-        flexDirection: 'column',
-        width: '100%',
-        minHeight: 0,
-        background: isPlaceholder ? 'transparent' : isButton ? '#272728' : '#1A1A1C',
-        color: '#FFFFFF',
-        border: `1px solid ${isSelected ? '#2A80F4' : '#313133'}`,
-        borderRadius: isPlaceholder ? '0' : '12px',
-        justifyContent: isButton ? 'center' : undefined,
-        alignItems: isButton ? 'center' : undefined,
-        gridColumn: `span ${block.span}`,
-        gridRow: `span ${block.rowSpan}`,
-      }}
-      onClick={(event) => {
-        event.stopPropagation();
-        onSelect();
+        top: `${rect.top}px`,
+        left: `${rect.left}px`,
+        width: `${rect.width}px`,
+        height: `${rect.height}px`,
       }}
     >
-      <TrustedHtml
-        className="block-content"
-        style={{
-          padding: isPlaceholder ? '0' : '12px',
-          height: block.mode === 'auto' || block.mode === 'grow' ? 'auto' : '100%',
-          boxSizing: 'border-box',
-          overflowY: isButton ? 'hidden' : block.mode === 'scroll' ? 'auto' : 'hidden',
-          overflowX: 'hidden',
-          display: isButton ? 'flex' : undefined,
-          alignItems: isButton ? 'center' : undefined,
-          justifyContent: isButton ? 'center' : undefined,
-          textAlign: isButton ? 'center' : undefined,
-          width: '100%',
-          borderRadius: isPlaceholder ? '0' : undefined,
-        }}
-        html={block.content.html}
+      <SelectionOverlay
+        label={label}
+        labelClassName={labelClassName}
       />
-
-      {isSelected && (
-        <div className="absolute -left-1 -top-7 rounded bg-[#2A80F4] px-2 py-0.5 text-xs text-white">
-          {block.span}x{block.rowSpan}
-        </div>
-      )}
     </div>
   );
 }
 
 /**
  * ============================================
- * BLOCK: Section Component
- * VERSION: 1.2.0
+ * BLOCK: Editor Overlay
+ * VERSION: 4.2.0
  * PURPOSE:
- * Визуализация секции и её изоляторов внутри builder canvas.
+ * Верхний editor layer над real preview surface.
+ *
+ * NOTES:
+ * - ловит только builder interactions
+ * - рисует selection по реальным iframe DOM bounds
  * ============================================
  */
-interface SectionComponentProps {
-  section: Section;
+interface EditorOverlayProps {
   selectedElement: SelectedElement | null;
+  snapshot: OverlaySnapshotMap;
+  sections: Section[];
+  minHeight: number;
   onSelectElement: (element: SelectedElement | null) => void;
 }
 
-function SectionComponent({
-  section,
+function EditorOverlay({
   selectedElement,
+  snapshot,
+  sections,
+  minHeight,
   onSelectElement,
-}: SectionComponentProps) {
-  const isSectionSelected = selectedElement?.id === section.id;
-  const isHeaderSelected = selectedElement?.id === section.header.id;
-  const isContentSelected = selectedElement?.id === section.content.id;
-
-  const headerHtml = section.header.endpoint?.html?.trim()
-    ? section.header.endpoint.html
-    : `<div class="h1 text-white">${section.header.title}</div>`;
-
-  const contentEndpointHtml = section.content.endpoint?.html?.trim() || '';
+}: EditorOverlayProps) {
+  const sectionEntries = Array.from(snapshot.sections.values());
+  const headerEntries = Array.from(snapshot.headers.values());
+  const contentEntries = Array.from(snapshot.contents.values());
+  const blockEntries = Array.from(snapshot.blocks.values());
 
   return (
     <div
-      className="relative z-10 cursor-pointer transition-all duration-150"
-      onClick={(event) => {
-        event.stopPropagation();
-        onSelectElement({ type: 'section', id: section.id });
+      className="absolute left-0 top-0 z-10 w-full pointer-events-auto"
+      style={{ height: `${minHeight}px` }}
+      onMouseDown={(event) => {
+        const nextSelectedElement = resolveSelectedElementFromPoint(
+          snapshot,
+          sections,
+          event.nativeEvent.offsetX,
+          event.nativeEvent.offsetY
+        );
+
+        onSelectElement(nextSelectedElement);
+      }}
+      onDoubleClick={(event) => {
+        const nextSelectedElement = resolveSelectedElementFromPoint(
+          snapshot,
+          sections,
+          event.nativeEvent.offsetX,
+          event.nativeEvent.offsetY
+        );
+
+        if (nextSelectedElement?.type === 'block') {
+          const section = findSectionByBlockId(sections, nextSelectedElement.id);
+
+          if (section) {
+            onSelectElement({
+              type: 'content',
+              id: section.content.id,
+              parentId: section.id,
+            });
+            return;
+          }
+        }
+
+        if (nextSelectedElement?.type === 'content') {
+          const section = findSectionByContentId(sections, nextSelectedElement.id);
+
+          if (section) {
+            onSelectElement({
+              type: 'section',
+              id: section.id,
+            });
+            return;
+          }
+        }
+
+        if (nextSelectedElement?.type === 'header') {
+          const section = findSectionByHeaderId(sections, nextSelectedElement.id);
+
+          if (section) {
+            onSelectElement({
+              type: 'section',
+              id: section.id,
+            });
+            return;
+          }
+        }
+
+        onSelectElement(nextSelectedElement);
       }}
     >
-      {isSectionSelected && (
-        <SelectionOverlay label="Section" labelClassName="-top-6 right-0" />
-      )}
+      {sectionEntries.map((entry) => (
+        <OverlayBox
+          key={`section-${entry.id}`}
+          rect={entry.rect}
+          isSelected={isSelectedElement(selectedElement, 'section', entry.id)}
+          label="Section"
+        />
+      ))}
 
-      {/* ============================================
-          BLOCK: Header Isolator View
-          VERSION: 1.0.0
-          ============================================ */}
-      <div
-        className="relative z-10 cursor-pointer transition-all duration-150"
-        style={{
-          width: '100%',
-          maxWidth: DEFAULT_SECTION_MAX_WIDTH,
-          height: DEFAULT_HEADER_HEIGHT,
-          margin: '0 auto',
-          display: 'flex',
-          alignItems: 'center',
-          position: 'relative',
-        }}
-        onClick={(event) => {
-          event.stopPropagation();
-          onSelectElement({
-            type: 'header',
-            id: section.header.id,
-            parentId: section.id,
-          });
-        }}
-      >
-        {isHeaderSelected && (
-          <SelectionOverlay label="Header" labelClassName="-top-6 right-0" />
-        )}
+      {headerEntries.map((entry) => (
+        <OverlayBox
+          key={`header-${entry.id}`}
+          rect={entry.rect}
+          isSelected={isSelectedElement(selectedElement, 'header', entry.id)}
+          label="Header"
+        />
+      ))}
 
-        <TrustedHtml className="section-header-content w-full" html={headerHtml} />
-      </div>
+      {contentEntries.map((entry) => (
+        <OverlayBox
+          key={`content-${entry.id}`}
+          rect={entry.rect}
+          isSelected={isSelectedElement(selectedElement, 'content', entry.id)}
+          label="Content"
+        />
+      ))}
 
-      {/* ============================================
-          BLOCK: Content Isolator View
-          VERSION: 1.0.0
-          ============================================ */}
-      <div
-        className="relative z-10 cursor-pointer transition-all duration-150"
-        style={{
-          width: '100%',
-          maxWidth: DEFAULT_SECTION_MAX_WIDTH,
-          margin: '0 auto',
-          position: 'relative',
-          paddingTop: '0px',
-        }}
-        onClick={(event) => {
-          event.stopPropagation();
-          onSelectElement({
-            type: 'content',
-            id: section.content.id,
-            parentId: section.id,
-          });
-        }}
-      >
-        {isContentSelected && (
-          <SelectionOverlay label="Content" labelClassName="-top-6 right-0" />
-        )}
-
-        <div
-          className="grid"
-          style={{
-            display: 'grid',
-            gridTemplateColumns: DEFAULT_GRID_COLUMNS,
-            gridAutoRows: DEFAULT_GRID_ROW,
-            gap: DEFAULT_GRID_GAP,
-            minHeight: '44px',
-          }}
-        >
-          {section.content.blocks.map((block) => (
-            <BlockComponent
-              key={block.id}
-              block={block}
-              isSelected={selectedElement?.id === block.id}
-              onSelect={() =>
-                onSelectElement({
-                  type: 'block',
-                  id: block.id,
-                  parentId: section.id,
-                })
-              }
-            />
-          ))}
-
-          {section.content.blocks.length === 0 && !contentEndpointHtml && (
-            <div
-              className="col-span-6 row-span-2 flex items-center justify-center rounded-lg border-2 border-dashed border-[#313133] text-sm text-[#666]"
-              style={{ minHeight: '56px' }}
-            >
-              Нажмите + для добавления блока
-            </div>
-          )}
-        </div>
-
-        {contentEndpointHtml && (
-          <TrustedHtml
-            className="mt-3 rounded-xl border border-[#313133] bg-[#151517] p-3 text-sm text-white"
-            html={contentEndpointHtml}
-          />
-        )}
-      </div>
+      {blockEntries.map((entry) => (
+        <OverlayBox
+          key={`block-${entry.id}`}
+          rect={entry.rect}
+          isSelected={isSelectedElement(selectedElement, 'block', entry.id)}
+          label="Block"
+          className="rounded-xl"
+        />
+      ))}
     </div>
   );
 }
@@ -344,25 +712,75 @@ function SectionComponent({
 /**
  * ============================================
  * MODULE: Canvas Root
- * VERSION: 1.2.0
+ * VERSION: 4.2.0
  * ROLE:
  * Корневой компонент builder canvas.
+ *
+ * ARCHITECTURE:
+ * - Layer 1: real preview surface
+ * - Layer 2: DOM-driven editor overlay
  * ============================================
  */
 export function Canvas() {
   const { project, selectedElement, viewMode, selectElement } = useProjectStore();
 
-  /**
-   * ============================================
-   * BLOCK: Current Page Resolution
-   * VERSION: 1.0.0
-   * PURPOSE:
-   * Пока builder работает с первой страницей проекта.
-   * ============================================
-   */
+  const [previewHeight, setPreviewHeight] = useState(DEFAULT_MIN_PREVIEW_HEIGHT_PX);
+  const [canvasViewportHeight, setCanvasViewportHeight] = useState(
+    DEFAULT_MIN_PREVIEW_HEIGHT_PX
+  );
+  const [overlaySnapshot, setOverlaySnapshot] = useState<OverlaySnapshotMap>(
+    createEmptyOverlaySnapshotMap()
+  );
+
+  const canvasViewportRef = useRef<HTMLDivElement | null>(null);
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+
   const currentPage = project.pages[0];
   const canvasWidth = CANVAS_FRAME_WIDTHS[viewMode];
-  const canvasLabel = CANVAS_FRAME_LABELS[viewMode];
+  const previewHtml = useMemo(() => getProjectPreviewHtml(project), [project]);
+  const frameHeight = Math.max(previewHeight, canvasViewportHeight);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      selectElement(null);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [selectElement]);
+
+  useEffect(() => {
+    const root = canvasViewportRef.current;
+    if (!root) return;
+
+    const updateViewportHeight = () => {
+      const nextHeight = Math.max(
+        root.clientHeight - 64,
+        DEFAULT_MIN_PREVIEW_HEIGHT_PX
+      );
+
+      setCanvasViewportHeight(nextHeight);
+    };
+
+    updateViewportHeight();
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateViewportHeight();
+    });
+
+    resizeObserver.observe(root);
+    window.addEventListener('resize', updateViewportHeight);
+
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', updateViewportHeight);
+    };
+  }, []);
 
   if (!currentPage) {
     return (
@@ -376,40 +794,46 @@ export function Canvas() {
   }
 
   return (
-    <div className="relative flex-1 overflow-auto bg-[#111111]">
-      <div
-        className="relative z-10 flex min-h-full px-4 py-8 transition-all duration-300"
-        style={{
-          width: canvasWidth,
-          margin: '0 auto',
-          alignItems: currentPage.sections.length <= 1 ? 'center' : 'stretch',
-        }}
-        onClick={() => selectElement(null)}
-      >
-        <div className="w-full" style={{ margin: '0 auto' }}>
-          {currentPage.sections.map((section) => (
-            <SectionComponent
-              key={section.id}
-              section={section}
+    <div
+      ref={canvasViewportRef}
+      className="relative flex-1 min-h-0 bg-[#111111]"
+    >
+      <ScrollArea className="h-full">
+        <div
+          className="relative px-4 py-8 transition-all duration-300"
+          style={{
+            width: canvasWidth,
+            margin: '0 auto',
+          }}
+        >
+          <div
+            ref={surfaceRef}
+            className="relative w-full"
+            style={{
+              minHeight: `${frameHeight}px`,
+              margin: '0 auto',
+            }}
+          >
+            <PreviewSurface
+              html={previewHtml}
+              frameWidth="100%"
+              previewHeight={frameHeight}
+              surfaceRef={surfaceRef}
+              iframeRef={iframeRef}
+              onHeightChange={setPreviewHeight}
+              onSnapshotChange={setOverlaySnapshot}
+            />
+
+            <EditorOverlay
               selectedElement={selectedElement}
+              snapshot={overlaySnapshot}
+              sections={currentPage.sections}
+              minHeight={frameHeight}
               onSelectElement={selectElement}
             />
-          ))}
-
-          {currentPage.sections.length === 0 && (
-            <div className="flex h-96 flex-col items-center justify-center rounded-2xl border border-dashed border-[#2C3B55] bg-[#121a25] text-center">
-              <div className="mb-2 text-lg text-[#9EB6D8]">Нет секций</div>
-              <div className="mb-4 text-sm text-[#B0B0B0]">
-                Нажмите &quot;Секция&quot; в верхней панели для добавления
-              </div>
-            </div>
-          )}
+          </div>
         </div>
-      </div>
-
-      <div className="absolute bottom-4 right-4 rounded-lg border border-[#313133] bg-[#1A1A1C] px-3 py-1.5 text-xs text-[#B0B0B0]">
-        {canvasLabel}
-      </div>
+      </ScrollArea>
     </div>
   );
 }
