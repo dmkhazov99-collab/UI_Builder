@@ -15,7 +15,7 @@
  *
  * DEPENDS ON:
  * - useProjectStore()
- * - projectPersistence
+ * - projectPersistenceGateway
  * - htmlExporter
  * - ToolbarDialogs
  *
@@ -28,7 +28,7 @@
  * - открытие и создание новых проектов должны идти через guards
  *
  * SECURITY:
- * - используется только локальный persistence/browser workflow
+ * - save/open flow использует async persistence gateway
  * - destructive actions подтверждаются явно
  * ============================================
  */
@@ -62,11 +62,12 @@ import { Separator } from '@/components/ui/separator';
 import { downloadHTML, downloadProjectBundle } from '@/core/htmlExporter';
 import {
   deleteStoredProject,
+  getStoredProject,
   listStoredProjects,
   renameStoredProject,
   saveStoredProject,
   type StoredProjectRecord,
-} from '@/core/projectPersistence';
+} from '@/core/projectPersistenceGateway';
 import { ToolbarDialogs } from '@/panels/ToolbarDialogs';
 import {
   captureProjectSnapshot,
@@ -136,6 +137,12 @@ export function Toolbar() {
 
   const [storedProjects, setStoredProjects] = useState<StoredProjectRecord[]>([]);
   const [projectSearch, setProjectSearch] = useState('');
+  const [isProjectsLoading, setIsProjectsLoading] = useState(false);
+  const [isProjectSaving, setIsProjectSaving] = useState(false);
+  const [isRenameSaving, setIsRenameSaving] = useState(false);
+  const [projectActionState, setProjectActionState] = useState<
+    { id: string; type: 'open' | 'duplicate' | 'delete' } | null
+  >(null);
 
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
 
@@ -181,8 +188,29 @@ export function Toolbar() {
     };
   }, [hasUnsavedChanges]);
 
-  const refreshStoredProjects = () => {
-    setStoredProjects(listStoredProjects());
+  const refreshStoredProjects = async () => {
+    try {
+      setIsProjectsLoading(true);
+      const records = await listStoredProjects();
+      setStoredProjects(records);
+      return records;
+    } catch (error) {
+      console.error('Failed to load stored projects', error);
+      throw error;
+    } finally {
+      setIsProjectsLoading(false);
+    }
+  };
+
+  const resolveProjectRecord = async (
+    record: StoredProjectRecord
+  ): Promise<StoredProjectRecord | null> => {
+    try {
+      return await getStoredProject(record.id);
+    } catch (error) {
+      console.error(`Failed to load full project record ${record.id}`, error);
+      throw error;
+    }
   };
 
   const handleNewProjectDialogChange = (open: boolean) => {
@@ -194,11 +222,18 @@ export function Toolbar() {
     }
   };
 
-  const handleFileDialogChange = (open: boolean) => {
+  const handleFileDialogChange = async (open: boolean) => {
     setShowFileDialog(open);
 
-    if (open) {
-      refreshStoredProjects();
+    if (!open) {
+      return;
+    }
+
+    try {
+      await refreshStoredProjects();
+    } catch (error) {
+      console.error('Failed to open file dialog with remote projects', error);
+      toast.error(error instanceof Error ? error.message : 'Не удалось загрузить проекты');
     }
   };
 
@@ -262,54 +297,111 @@ export function Toolbar() {
     executeNewProject();
   };
 
-  const handleSaveProject = () => {
-    const name = saveProjectName.trim() || 'Без названия';
-    const description = saveProjectDescription.trim();
+  const handleSaveProject = async () => {
+    try {
+      setIsProjectSaving(true);
 
-    const record = saveStoredProject(project, { name, description });
+      const name = saveProjectName.trim() || 'Без названия';
+      const description = saveProjectDescription.trim();
 
-    setProject(record.project);
-    markProjectSaved(record.project);
-    setShowSaveDialog(false);
+      const record = await saveStoredProject(project, { name, description });
 
-    refreshStoredProjects();
-    toast.success('Проект сохранён');
+      setProject(record.project);
+      markProjectSaved(record.project);
+      setShowSaveDialog(false);
 
-    return record;
+      await refreshStoredProjects();
+      toast.success('Проект сохранён');
+
+      return record;
+    } catch (error) {
+      console.error('Failed to save project', error);
+      toast.error(error instanceof Error ? error.message : 'Не удалось сохранить проект');
+      return null;
+    } finally {
+      setIsProjectSaving(false);
+    }
   };
 
-  const executeOpenProject = (record: StoredProjectRecord) => {
-    setProject(record.project);
-    markProjectSaved(record.project);
+  const executeOpenProject = async (record: StoredProjectRecord) => {
+    try {
+      setProjectActionState({ id: record.id, type: 'open' });
 
-    setShowFileDialog(false);
-    setPendingAction(null);
+      const loadedRecord = await resolveProjectRecord(record);
 
-    toast.success(`Проект «${record.name}» открыт`);
+      if (!loadedRecord) {
+        toast.error('Не удалось загрузить проект');
+        return;
+      }
+
+      setProject(loadedRecord.project);
+      markProjectSaved(loadedRecord.project);
+
+      setShowFileDialog(false);
+      setPendingAction(null);
+
+      toast.success(`Проект «${loadedRecord.name}» открыт`);
+    } catch (error) {
+      console.error(`Failed to open project ${record.id}`, error);
+      toast.error(error instanceof Error ? error.message : 'Не удалось открыть проект');
+    } finally {
+      setProjectActionState((current) =>
+        current?.id === record.id && current.type === 'open' ? null : current
+      );
+    }
   };
 
-  const requestOpenProject = (record: StoredProjectRecord) => {
+  const requestOpenProject = async (record: StoredProjectRecord) => {
     if (hasUnsavedChanges) {
       setPendingAction({ type: 'open', record });
       setShowUnsavedDialog(true);
       return;
     }
 
-    executeOpenProject(record);
+    await executeOpenProject(record);
   };
 
-  const handleDuplicateProject = (record: StoredProjectRecord) => {
-    saveStoredProject(createDuplicatedProject(record));
-    refreshStoredProjects();
-    toast.success('Проект продублирован');
+  const handleDuplicateProject = async (record: StoredProjectRecord) => {
+    try {
+      setProjectActionState({ id: record.id, type: 'duplicate' });
+
+      const sourceRecord = await resolveProjectRecord(record);
+
+      if (!sourceRecord) {
+        toast.error('Не удалось загрузить проект для копирования');
+        return;
+      }
+
+      await saveStoredProject(createDuplicatedProject(sourceRecord));
+      await refreshStoredProjects();
+      toast.success('Проект продублирован');
+    } catch (error) {
+      console.error(`Failed to duplicate project ${record.id}`, error);
+      toast.error(error instanceof Error ? error.message : 'Не удалось продублировать проект');
+    } finally {
+      setProjectActionState((current) =>
+        current?.id === record.id && current.type === 'duplicate' ? null : current
+      );
+    }
   };
 
-  const handleDeleteProject = (recordId: string, recordName: string) => {
+  const handleDeleteProject = async (recordId: string, recordName: string) => {
     if (!window.confirm(`Удалить проект «${recordName}»?`)) return;
 
-    deleteStoredProject(recordId);
-    refreshStoredProjects();
-    toast.success('Проект удалён');
+    try {
+      setProjectActionState({ id: recordId, type: 'delete' });
+
+      await deleteStoredProject(recordId);
+      await refreshStoredProjects();
+      toast.success('Проект удалён');
+    } catch (error) {
+      console.error(`Failed to delete project ${recordId}`, error);
+      toast.error(error instanceof Error ? error.message : 'Не удалось удалить проект');
+    } finally {
+      setProjectActionState((current) =>
+        current?.id === recordId && current.type === 'delete' ? null : current
+      );
+    }
   };
 
   const openRenameDialog = (record: StoredProjectRecord) => {
@@ -319,53 +411,74 @@ export function Toolbar() {
     setShowRenameDialog(true);
   };
 
-  const handleRenameProject = () => {
+  const handleRenameProject = async () => {
     if (!renameTarget) return;
 
-    const updated = renameStoredProject(renameTarget.id, {
-      name: renameProjectName,
-      description: renameProjectDescription,
-    });
+    try {
+      setIsRenameSaving(true);
 
-    if (updated && updated.id === project.meta.id) {
-      setProject(updated.project);
-      markProjectSaved(updated.project);
+      const updated = await renameStoredProject(renameTarget.id, {
+        name: renameProjectName,
+        description: renameProjectDescription,
+      });
+
+      if (!updated) {
+        toast.error('Проект для переименования не найден');
+        return;
+      }
+
+      if (updated.id === project.meta.id) {
+        setProject(updated.project);
+        markProjectSaved(updated.project);
+      }
+
+      await refreshStoredProjects();
+      setShowRenameDialog(false);
+      setRenameTarget(null);
+
+      toast.success('Проект переименован');
+    } catch (error) {
+      console.error(`Failed to rename project ${renameTarget.id}`, error);
+      toast.error(error instanceof Error ? error.message : 'Не удалось переименовать проект');
+    } finally {
+      setIsRenameSaving(false);
     }
-
-    refreshStoredProjects();
-    setShowRenameDialog(false);
-    setRenameTarget(null);
-
-    toast.success('Проект переименован');
   };
 
-  const handleContinueAfterUnsaved = (nextMode: 'save' | 'discard') => {
+  const handleContinueAfterUnsaved = async (nextMode: 'save' | 'discard') => {
     const action = pendingAction;
     if (!action) return;
 
-    if (nextMode === 'save') {
-      const saved = saveStoredProject(project, {
-        name: project.meta.name || 'Без названия',
-        description: project.meta.description || '',
-      });
+    try {
+      if (nextMode === 'save') {
+        const saved = await saveStoredProject(project, {
+          name: project.meta.name || 'Без названия',
+          description: project.meta.description || '',
+        });
 
-      setProject(saved.project);
-      markProjectSaved(saved.project);
-      refreshStoredProjects();
+        setProject(saved.project);
+        markProjectSaved(saved.project);
+        await refreshStoredProjects();
 
-      toast.success('Проект сохранён перед переключением');
+        toast.success('Проект сохранён перед переключением');
+      }
+
+      if (action.type === 'new') {
+        executeNewProject();
+      }
+
+      if (action.type === 'open' && action.record) {
+        await executeOpenProject(action.record);
+      }
+
+      setPendingAction(null);
+      setShowUnsavedDialog(false);
+    } catch (error) {
+      console.error('Failed to continue after unsaved changes flow', error);
+      toast.error(
+        error instanceof Error ? error.message : 'Не удалось завершить переход с сохранением'
+      );
     }
-
-    if (action.type === 'new') {
-      executeNewProject();
-    }
-
-    if (action.type === 'open' && action.record) {
-      executeOpenProject(action.record);
-    }
-
-    setPendingAction(null);
-    setShowUnsavedDialog(false);
   };
 
   const handleAddSection = () => {
@@ -575,6 +688,8 @@ export function Toolbar() {
         setProjectSearch={setProjectSearch}
         storedProjects={storedProjects}
         filteredProjects={filteredProjects}
+        isProjectsLoading={isProjectsLoading}
+        projectActionState={projectActionState}
         onOpenProject={requestOpenProject}
         onRenameProject={openRenameDialog}
         onDuplicateProject={handleDuplicateProject}
@@ -586,6 +701,7 @@ export function Toolbar() {
         saveProjectDescription={saveProjectDescription}
         setSaveProjectDescription={setSaveProjectDescription}
         hasStoredCurrentProject={hasStoredCurrentProject}
+        isProjectSaving={isProjectSaving}
         onSaveProject={handleSaveProject}
         showUnsavedDialog={showUnsavedDialog}
         onUnsavedDialogChange={setShowUnsavedDialog}
@@ -600,6 +716,7 @@ export function Toolbar() {
         setRenameProjectName={setRenameProjectName}
         renameProjectDescription={renameProjectDescription}
         setRenameProjectDescription={setRenameProjectDescription}
+        isRenameSaving={isRenameSaving}
         onConfirmRenameProject={handleRenameProject}
       />
     </div>

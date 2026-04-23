@@ -1,7 +1,7 @@
 /**
  * ============================================
  * MODULE: ToolbarDialogs
- * VERSION: 1.1.0
+ * VERSION: 1.3.0
  * ROLE:
  * Вынесенные диалоговые окна toolbar workflow.
  * ============================================
@@ -49,13 +49,27 @@ const TEXTAREA_CLASS =
 const OUTLINE_ACTION_CLASS =
   'bg-[#171717] border-[#313133] text-white';
 
+type ProjectActionState = {
+  id: string;
+  type: 'open' | 'duplicate' | 'delete';
+} | null;
+
 function formatUpdatedAt(value: string): string {
   return new Date(value).toLocaleString();
+}
+
+function getActionLabel(actionState: ProjectActionState, recordId: string): string | null {
+  if (!actionState || actionState.id !== recordId) return null;
+
+  if (actionState.type === 'open') return 'Открываем проект...';
+  if (actionState.type === 'duplicate') return 'Дублируем проект...';
+  return 'Удаляем проект...';
 }
 
 function StoredProjectsList({
   records,
   currentProjectId,
+  actionState,
   onOpen,
   onRename,
   onDuplicate,
@@ -63,6 +77,7 @@ function StoredProjectsList({
 }: {
   records: StoredProjectRecord[];
   currentProjectId: string;
+  actionState: ProjectActionState;
   onOpen: (record: StoredProjectRecord) => void;
   onRename: (record: StoredProjectRecord) => void;
   onDuplicate: (record: StoredProjectRecord) => void;
@@ -80,6 +95,8 @@ function StoredProjectsList({
     <div className="flex flex-col gap-3">
       {records.map((record) => {
         const isCurrent = record.id === currentProjectId;
+        const pendingLabel = getActionLabel(actionState, record.id);
+        const isBusy = Boolean(pendingLabel);
 
         return (
           <div
@@ -107,6 +124,10 @@ function StoredProjectsList({
                 <p className="mt-2 text-[11px] text-[#6F6F73]">
                   Обновлён: {formatUpdatedAt(record.updatedAt)}
                 </p>
+
+                {pendingLabel ? (
+                  <p className="mt-2 text-[11px] text-[#7fb1ff]">{pendingLabel}</p>
+                ) : null}
               </div>
 
               <div className="flex shrink-0 items-center gap-2">
@@ -114,15 +135,17 @@ function StoredProjectsList({
                   size="sm"
                   variant="outline"
                   className={OUTLINE_ACTION_CLASS}
+                  disabled={isBusy}
                   onClick={() => onOpen(record)}
                 >
-                  Открыть
+                  {pendingLabel && actionState?.type === 'open' ? 'Открываем...' : 'Открыть'}
                 </Button>
 
                 <Button
                   size="icon"
                   variant="outline"
                   className="h-9 w-9 bg-[#171717] border-[#313133] text-[#B0B0B0]"
+                  disabled={isBusy}
                   onClick={() => onRename(record)}
                 >
                   <Pencil className="w-4 h-4" />
@@ -132,6 +155,7 @@ function StoredProjectsList({
                   size="icon"
                   variant="outline"
                   className="h-9 w-9 bg-[#171717] border-[#313133] text-[#B0B0B0]"
+                  disabled={isBusy}
                   onClick={() => onDuplicate(record)}
                 >
                   <Copy className="w-4 h-4" />
@@ -141,6 +165,7 @@ function StoredProjectsList({
                   size="icon"
                   variant="outline"
                   className="h-9 w-9 bg-[#171717] border-[#5c2d35] text-[#ff8d9d] hover:bg-[#2a171b]"
+                  disabled={isBusy}
                   onClick={() => onDelete(record.id, record.name)}
                 >
                   <Trash2 className="w-4 h-4" />
@@ -171,6 +196,8 @@ type ToolbarDialogsProps = {
   setProjectSearch: (value: string) => void;
   storedProjects: StoredProjectRecord[];
   filteredProjects: StoredProjectRecord[];
+  isProjectsLoading: boolean;
+  projectActionState: ProjectActionState;
   onOpenProject: (record: StoredProjectRecord) => void;
   onRenameProject: (record: StoredProjectRecord) => void;
   onDuplicateProject: (record: StoredProjectRecord) => void;
@@ -183,6 +210,7 @@ type ToolbarDialogsProps = {
   saveProjectDescription: string;
   setSaveProjectDescription: (value: string) => void;
   hasStoredCurrentProject: boolean;
+  isProjectSaving: boolean;
   onSaveProject: () => void;
 
   showUnsavedDialog: boolean;
@@ -196,6 +224,7 @@ type ToolbarDialogsProps = {
   setRenameProjectName: (value: string) => void;
   renameProjectDescription: string;
   setRenameProjectDescription: (value: string) => void;
+  isRenameSaving: boolean;
   onConfirmRenameProject: () => void;
 };
 
@@ -216,6 +245,8 @@ export function ToolbarDialogs({
   setProjectSearch,
   storedProjects,
   filteredProjects,
+  isProjectsLoading,
+  projectActionState,
   onOpenProject,
   onRenameProject,
   onDuplicateProject,
@@ -228,6 +259,7 @@ export function ToolbarDialogs({
   saveProjectDescription,
   setSaveProjectDescription,
   hasStoredCurrentProject,
+  isProjectSaving,
   onSaveProject,
 
   showUnsavedDialog,
@@ -241,6 +273,7 @@ export function ToolbarDialogs({
   setRenameProjectName,
   renameProjectDescription,
   setRenameProjectDescription,
+  isRenameSaving,
   onConfirmRenameProject,
 }: ToolbarDialogsProps) {
   return (
@@ -298,8 +331,8 @@ export function ToolbarDialogs({
             <DialogHeader className="space-y-2 text-left">
               <DialogTitle>Файл</DialogTitle>
               <DialogDescription className="max-w-none text-[#B0B0B0] leading-6">
-                Сохранённые проекты в этом браузере. Можно найти нужный, открыть,
-                переименовать, дублировать или удалить.
+                Сохранённые проекты в подключённом хранилище. Можно найти нужный,
+                открыть, переименовать, дублировать или удалить.
               </DialogDescription>
             </DialogHeader>
           </div>
@@ -312,11 +345,16 @@ export function ToolbarDialogs({
                 onChange={(event) => setProjectSearch(event.target.value)}
                 placeholder="Найти проект по названию или описанию"
                 className={`${INPUT_CLASS} pl-9`}
+                disabled={isProjectsLoading}
               />
             </div>
 
             <div className="scroll-theme max-h-[60vh] overflow-y-auto pr-1">
-              {filteredProjects.length === 0 ? (
+              {isProjectsLoading ? (
+                <div className="rounded-xl border border-dashed border-[#313133] bg-[#111111] px-4 py-8 text-center text-[#8A8A8A]">
+                  Идёт загрузка проектов...
+                </div>
+              ) : filteredProjects.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-[#313133] bg-[#111111] px-4 py-8 text-center text-[#8A8A8A]">
                   {storedProjects.length === 0
                     ? 'Пока нет сохранённых проектов.'
@@ -326,6 +364,7 @@ export function ToolbarDialogs({
                 <StoredProjectsList
                   records={filteredProjects}
                   currentProjectId={currentProjectId}
+                  actionState={projectActionState}
                   onOpen={onOpenProject}
                   onRename={onRenameProject}
                   onDuplicate={onDuplicateProject}
@@ -343,7 +382,7 @@ export function ToolbarDialogs({
             <DialogHeader className="space-y-2 text-left">
               <DialogTitle>Сохранить проект</DialogTitle>
               <DialogDescription className="max-w-none text-[#B0B0B0] leading-6">
-                Укажи название проекта. Он сохранится в локальном хранилище браузера
+                Укажи название проекта. Он сохранится через API
                 и появится в меню «Файл».
               </DialogDescription>
             </DialogHeader>
@@ -358,6 +397,7 @@ export function ToolbarDialogs({
                 onChange={(event) => setSaveProjectName(event.target.value)}
                 placeholder="Например, CRM Dashboard"
                 className={INPUT_CLASS}
+                disabled={isProjectSaving}
               />
             </div>
 
@@ -369,6 +409,7 @@ export function ToolbarDialogs({
                 onChange={(event) => setSaveProjectDescription(event.target.value)}
                 placeholder="Коротко опиши назначение проекта"
                 className={TEXTAREA_CLASS}
+                disabled={isProjectSaving}
               />
             </div>
 
@@ -380,15 +421,16 @@ export function ToolbarDialogs({
           </div>
 
           <div className={DIALOG_FOOTER_CLASS}>
-            <Button variant="ghost" onClick={() => onSaveDialogChange(false)}>
+            <Button variant="ghost" onClick={() => onSaveDialogChange(false)} disabled={isProjectSaving}>
               Отмена
             </Button>
 
             <Button
               onClick={onSaveProject}
+              disabled={isProjectSaving}
               className="bg-[#2A80F4] hover:bg-[#1e6fd9]"
             >
-              Сохранить
+              {isProjectSaving ? 'Сохраняем...' : 'Сохранить'}
             </Button>
           </div>
         </DialogContent>
@@ -453,6 +495,7 @@ export function ToolbarDialogs({
                 value={renameProjectName}
                 onChange={(event) => setRenameProjectName(event.target.value)}
                 className={INPUT_CLASS}
+                disabled={isRenameSaving}
               />
             </div>
 
@@ -463,20 +506,22 @@ export function ToolbarDialogs({
                 value={renameProjectDescription}
                 onChange={(event) => setRenameProjectDescription(event.target.value)}
                 className={TEXTAREA_CLASS}
+                disabled={isRenameSaving}
               />
             </div>
           </div>
 
           <div className={DIALOG_FOOTER_CLASS}>
-            <Button variant="ghost" onClick={() => onRenameDialogChange(false)}>
+            <Button variant="ghost" onClick={() => onRenameDialogChange(false)} disabled={isRenameSaving}>
               Отмена
             </Button>
 
             <Button
               className="bg-[#2A80F4] hover:bg-[#1e6fd9]"
+              disabled={isRenameSaving}
               onClick={onConfirmRenameProject}
             >
-              Сохранить изменения
+              {isRenameSaving ? 'Сохраняем...' : 'Сохранить изменения'}
             </Button>
           </div>
         </DialogContent>
